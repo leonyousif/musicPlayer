@@ -1,42 +1,108 @@
 package leon.music;
 
+import java.awt.BorderLayout;
+
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
+
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
-import uk.co.caprica.vlcj.factory.discovery.NativeDiscovery;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 
 public class Main {
 
-    public static void main(String[] args) throws InterruptedException {
-        // 1. Try to find VLC on your system
-        System.setProperty("jna.library.path", "E:\\VLC");
-        boolean found = new NativeDiscovery().discover();
-        System.out.println("VLC found: " + found);
+    // VLCJ fields
+    private MediaPlayerFactory factory;
+    private MediaPlayer player;
 
-        if (!found) {
-            System.out.println("VLC was not found. Make sure it is installed (64-bit) and on your PATH.");
-            return;
+    // Change this to the MP3 you tested earlier
+    private final String mediaPath = "C:\\Users\\GGPC\\Desktop\\TheoryOfEverything2.mp3";
+
+    // GUI fields
+    private JFrame frame;
+    private JButton playPauseButton;
+    private JButton stopButton;
+    private JLabel statusLabel;
+
+    public Main() {
+        initVlcj();
+        createAndShowGui();
+    }
+
+    private void initVlcj() {
+        try {
+            // This will use vlcj's built-in native discovery
+            factory = new MediaPlayerFactory();
+            player = factory.mediaPlayers().newMediaPlayer();
+            player.audio().setVolume(100);
+        } catch (Throwable t) {
+            // If VLC native libs can't be loaded, show an error and exit
+            JOptionPane.showMessageDialog(
+                    null,
+                    "Could not load VLC native libraries.\n" +
+                    "Check that VLC is installed at E:\\VLC and is 64-bit.",
+                    "VLC error",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            t.printStackTrace();
+            System.exit(1);
         }
+    }
 
-        // 2. Path to your music file (change this!)
-        // Example: "C:/Users/Leon/Music/song.mp3"
-        String mediaPath = "C:\\Users\\GGPC\\Desktop\\TheoryOfEverything2.mp3";
+    private void createAndShowGui() {
+        frame = new JFrame("Leon VLCJ Music Player");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
+        playPauseButton = new JButton("Play");
+        stopButton = new JButton("Stop");
+        statusLabel = new JLabel("Status: idle");
 
+        playPauseButton.addActionListener(e -> onPlayPause());
+        stopButton.addActionListener(e -> onStop());
 
-        MediaPlayerFactory factory = new MediaPlayerFactory();
-        MediaPlayer player = factory.mediaPlayers().newMediaPlayer();
+        JPanel buttonPanel = new JPanel();
+        buttonPanel.add(playPauseButton);
+        buttonPanel.add(stopButton);
 
-        System.out.println("Playing: " + mediaPath);
-        player.media().play(mediaPath);
+        frame.setLayout(new BorderLayout());
+        frame.add(statusLabel, BorderLayout.NORTH);
+        frame.add(buttonPanel, BorderLayout.CENTER);
 
-        // 3. Keep the program alive while the music plays
-        // (simple version: sleep for 5 minutes)
-        Thread.sleep(5 * 60 * 1000);
+        frame.setSize(320, 130);
+        frame.setLocationRelativeTo(null); // center on screen
+        frame.setVisible(true);
+    }
 
-        player.controls().stop();
-        player.release();
-        factory.release();
+    private void onPlayPause() {
+        if (!player.status().isPlaying()) {
+            // Not playing → start playback
+            statusLabel.setText("Status: playing");
+            playPauseButton.setText("Pause");
+            player.media().play(mediaPath);
+        } else {
+            // Already playing → pause
+            player.controls().pause();
+            statusLabel.setText("Status: paused");
+            playPauseButton.setText("Play");
+        }
+    }
 
-        System.out.println("Done.");
+    private void onStop() {
+        if (player != null) {
+            player.controls().stop();
+            statusLabel.setText("Status: stopped");
+            playPauseButton.setText("Play");
+        }
+    }
+
+    public static void main(String[] args) {
+        // Tell JNA/VLCJ where VLC is installed
+        System.setProperty("jna.library.path", "E:\\VLC");
+
+        // Start GUI on the Swing event thread
+        SwingUtilities.invokeLater(Main::new);
     }
 }
