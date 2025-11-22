@@ -1,31 +1,44 @@
 package leon.music;
 
 import java.awt.BorderLayout;
+import java.io.File;
 
 import javax.swing.JButton;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JSlider;
 import javax.swing.SwingUtilities;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.Timer;
+
+
 
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 
 public class Main {
 
-    // VLCJ fields
+    // VLCJ 
     private MediaPlayerFactory factory;
     private MediaPlayer player;
 
-    // Change this to the MP3 you tested earlier
-    private final String mediaPath = "C:\\Users\\GGPC\\Desktop\\TheoryOfEverything2.mp3";
 
-    // GUI fields
+
+    // new mp3 path
+    private String currentMediaPath = null;
+
+
+    // GUI 
+    private JButton openButton;
     private JFrame frame;
     private JButton playPauseButton;
     private JButton stopButton;
     private JLabel statusLabel;
+    private JSlider progressBar;
+    private Timer progressTimer;
 
     public Main() {
         initVlcj();
@@ -34,7 +47,7 @@ public class Main {
 
     private void initVlcj() {
         try {
-            // This will use vlcj's built-in native discovery
+            
             factory = new MediaPlayerFactory();
             player = factory.mediaPlayers().newMediaPlayer();
             player.audio().setVolume(100);
@@ -58,22 +71,40 @@ public class Main {
 
         playPauseButton = new JButton("Play");
         stopButton = new JButton("Stop");
+        openButton = new JButton("Open");
         statusLabel = new JLabel("Status: idle");
 
         playPauseButton.addActionListener(e -> onPlayPause());
+        openButton.addActionListener(e -> onOpenFile());
         stopButton.addActionListener(e -> onStop());
 
-        JPanel buttonPanel = new JPanel();
+        JPanel buttonPanel = new JPanel();  
         buttonPanel.add(playPauseButton);
         buttonPanel.add(stopButton);
+        buttonPanel.add(openButton);
+
+        progressBar = new JSlider(0, 1000, 0); 
+        progressBar.setEnabled(false);
+
 
         frame.setLayout(new BorderLayout());
         frame.add(statusLabel, BorderLayout.NORTH);
         frame.add(buttonPanel, BorderLayout.CENTER);
+        frame.add(progressBar, BorderLayout.SOUTH);
+
+
+        progressTimer = new Timer(500, e -> updateProgress()); // 0.5s
+        progressTimer.start();
+
+        frame.setSize(420, 160);
+        frame.setLocationRelativeTo(null);
+        frame.setVisible(true);
 
         frame.setSize(320, 130);
         frame.setLocationRelativeTo(null); // center on screen
         frame.setVisible(true);
+
+        
     }
 
     private void onPlayPause() {
@@ -81,7 +112,7 @@ public class Main {
             // Not playing → start playback
             statusLabel.setText("Status: playing");
             playPauseButton.setText("Pause");
-            player.media().play(mediaPath);
+            player.media().play(currentMediaPath);
         } else {
             // Already playing → pause
             player.controls().pause();
@@ -92,17 +123,68 @@ public class Main {
 
     private void onStop() {
         if (player != null) {
+            System.out.println("Stopping playback.");
             player.controls().stop();
             statusLabel.setText("Status: stopped");
             playPauseButton.setText("Play");
+            progressBar.setValue(0);
         }
     }
 
-    public static void main(String[] args) {
-        // Tell JNA/VLCJ where VLC is installed
-        System.setProperty("jna.library.path", "E:\\VLC");
+    private void onOpenFile() {
+    JFileChooser chooser = new JFileChooser();
+    chooser.setDialogTitle("Choose an audio file");
 
-        // Start GUI on the Swing event thread
+    chooser.setFileFilter(new FileNameExtensionFilter(
+            "Audio Files (mp3, wav, flac, ogg, aac, m4a)",
+            "mp3", "wav", "flac", "ogg", "aac", "m4a"
+    ));
+
+    int result = chooser.showOpenDialog(frame);
+
+    if (result == JFileChooser.APPROVE_OPTION) {
+        File selected = chooser.getSelectedFile();
+        currentMediaPath = selected.getAbsolutePath();
+        statusLabel.setText("Status: selected " + selected.getName());
+
+        if (player.status().isPlaying()) {
+            player.controls().stop();
+        }
+
+        // auto play new file
+        player.media().play(currentMediaPath);
+        playPauseButton.setText("Pause");
+        statusLabel.setText("Status: playing " + selected.getName());
+        }
+    }
+
+
+    private void updateProgress() {
+        if (player == null) {
+            return;
+        }
+
+        // Get current time and total length in milliseconds
+        long length = player.status().length();
+        long time   = player.status().time();
+
+        if (length <= 0 || time < 0) {
+            // Media not ready yet, or no media
+            progressBar.setValue(0);
+            return;
+        }
+
+        double fraction = (double) time / (double) length; 
+        int sliderValue = (int) (fraction * progressBar.getMaximum());
+
+        progressBar.setValue(sliderValue);
+    }
+
+
+
+
+    public static void main(String[] args) {
+        System.setProperty("jna.library.path", "E:\\VLC");
         SwingUtilities.invokeLater(Main::new);
     }
 }
