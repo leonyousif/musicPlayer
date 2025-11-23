@@ -11,10 +11,8 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JSlider;
 import javax.swing.SwingUtilities;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.Timer;
-
-
+import javax.swing.filechooser.FileNameExtensionFilter;
 
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
@@ -69,22 +67,32 @@ public class Main {
         frame = new JFrame("Leon VLCJ Music Player");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
+        frame.getContentPane().setBackground(Theme.BG_COLOR);
+
         playPauseButton = new JButton("Play");
+        Theme.styleButton(playPauseButton);
         stopButton = new JButton("Stop");
+        Theme.styleButton(stopButton);
         openButton = new JButton("Open");
+        Theme.styleButton(openButton);
         statusLabel = new JLabel("Status: idle");
+        Theme.styleLabel(statusLabel);
+        
 
         playPauseButton.addActionListener(e -> onPlayPause());
         openButton.addActionListener(e -> onOpenFile());
         stopButton.addActionListener(e -> onStop());
 
         JPanel buttonPanel = new JPanel();  
+        Theme.stylePanel(buttonPanel);
         buttonPanel.add(playPauseButton);
         buttonPanel.add(stopButton);
         buttonPanel.add(openButton);
+        
 
         progressBar = new JSlider(0, 1000, 0); 
         progressBar.setEnabled(false);
+        Theme.styleProgressBar(progressBar);
 
 
         frame.setLayout(new BorderLayout());
