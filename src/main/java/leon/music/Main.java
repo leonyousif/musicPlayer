@@ -15,6 +15,11 @@ import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.filechooser.FileNameExtensionFilter;
 
+import org.jaudiotagger.audio.AudioFile;
+import org.jaudiotagger.audio.AudioFileIO;
+import org.jaudiotagger.tag.FieldKey;
+import org.jaudiotagger.tag.Tag;
+
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 
@@ -38,6 +43,9 @@ public class Main {
     private Timer progressTimer;
 
     private boolean isSeeking = false;
+
+    private JLabel trackInfoLabel;
+    private JLabel timeLabel;
 
     public Main() {
         initVlcj();
@@ -81,9 +89,21 @@ public class Main {
         statusLabel = new JLabel("Status: idle");
         Theme.styleLabel(statusLabel);
 
+        trackInfoLabel = new JLabel("No file loaded");
+        Theme.styleLabel(trackInfoLabel);
+
+        timeLabel = new JLabel("00:00 / 00:00");
+        Theme.styleLabel(timeLabel);
+
         playPauseButton.addActionListener(e -> onPlayPause());
         openButton.addActionListener(e -> onOpenFile());
         stopButton.addActionListener(e -> onStop());
+
+        JPanel topPanel = new JPanel(new BorderLayout());
+        Theme.stylePanel(topPanel);
+        topPanel.add(trackInfoLabel, BorderLayout.NORTH);
+        topPanel.add(statusLabel, BorderLayout.CENTER);
+        topPanel.add(timeLabel, BorderLayout.SOUTH);
 
         // Button panel
         JPanel buttonPanel = new JPanel();
@@ -92,7 +112,6 @@ public class Main {
         buttonPanel.add(stopButton);
         buttonPanel.add(openButton);
 
-        
         volumeSlider = new JSlider(0, 100, 100);
         Theme.styleProgressBar(volumeSlider);
         volumeSlider.setPreferredSize(new Dimension(120, 20));
@@ -105,7 +124,7 @@ public class Main {
             }
         });
 
-        // Center panel 
+        // Center panel
         JPanel centerPanel = new JPanel(new BorderLayout());
         Theme.stylePanel(centerPanel);
         centerPanel.add(buttonPanel, BorderLayout.CENTER);
@@ -139,8 +158,8 @@ public class Main {
 
         // Layout
         frame.setLayout(new BorderLayout());
-        frame.add(statusLabel, BorderLayout.NORTH);
-        frame.add(centerPanel, BorderLayout.CENTER); 
+        frame.add(topPanel, BorderLayout.NORTH);
+        frame.add(centerPanel, BorderLayout.CENTER);
         frame.add(progressBar, BorderLayout.SOUTH);
 
         // Progress timer
@@ -188,23 +207,82 @@ public class Main {
 
         if (result == JFileChooser.APPROVE_OPTION) {
             File selected = chooser.getSelectedFile();
+            if (selected == null)
+                return;
+
             currentMediaPath = selected.getAbsolutePath();
-            statusLabel.setText("Status: selected " + selected.getName());
+
+            
+            updateMetadata(selected); // see method below
+
+            
+            progressBar.setValue(0);
+            timeLabel.setText("00:00 / 00:00");
 
             if (player.status().isPlaying()) {
                 player.controls().stop();
             }
 
-            // auto play new file
-            player.media().play(currentMediaPath);
-            playPauseButton.setText("Pause");
-            statusLabel.setText("Status: playing " + selected.getName());
+            statusLabel.setText("Status: loading " + selected.getName());
+
+            boolean started = player.media().play(currentMediaPath);
+            System.out.println("media().play(...) returned: " + started);
+
+            if (started) {
+                playPauseButton.setText("Pause");
+                statusLabel.setText("Status: playing " + selected.getName());
+            } else {
+                statusLabel.setText("Status: failed to start playback");
+            }
         }
+    }
+
+    private void updateMetadata(File audioFile) {
+        try {
+            AudioFile af = AudioFileIO.read(audioFile);
+            Tag tag = af.getTag();
+
+            String title = audioFile.getName();
+            String artist = "";
+            String album = "";
+
+            if (tag != null) {
+                String t = tag.getFirst(FieldKey.TITLE);
+                String ar = tag.getFirst(FieldKey.ARTIST);
+                String al = tag.getFirst(FieldKey.ALBUM);
+
+                if (t != null && !t.isBlank())
+                    title = t;
+                if (ar != null && !ar.isBlank())
+                    artist = ar;
+                if (al != null && !al.isBlank())
+                    album = al;
+            }
+
+            StringBuilder sb = new StringBuilder(title);
+            if (!artist.isEmpty())
+                sb.append(" - ").append(artist);
+            if (!album.isEmpty())
+                sb.append(" [").append(album).append("]");
+
+            trackInfoLabel.setText(sb.toString());
+        } catch (Exception e) {
+            
+            trackInfoLabel.setText(audioFile.getName());
+            System.out.println("Could not read metadata: " + e.getMessage());
+        }
+    }
+
+    private String formatTime(long ms) {
+        long totalSeconds = ms / 1000;
+        long minutes = totalSeconds / 60;
+        long seconds = totalSeconds % 60;
+        return String.format("%02d:%02d", minutes, seconds);
     }
 
     private void updateProgress() {
         if (player == null || isSeeking) {
-            // don't overwrite the slider while the user is dragging it
+            
             return;
         }
 
@@ -219,6 +297,8 @@ public class Main {
         double fraction = (double) time / (double) length;
         int sliderValue = (int) (fraction * progressBar.getMaximum());
         progressBar.setValue(sliderValue);
+
+        timeLabel.setText(formatTime(time) + " / " + formatTime(length));
     }
 
     public static void main(String[] args) {
