@@ -9,18 +9,22 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSlider;
 import javax.swing.border.EmptyBorder;
+import javax.swing.AbstractButton;
 
 public class Theme {
 
-    // --- Dark theme colours ---
+    // theme colours
     public static final Color BG_COLOR = new Color(18, 18, 18);
     public static final Color FG_COLOR = new Color(235, 235, 235);
 
-    // Accent for primary buttons
+    // primary buttons
     public static final Color ACCENT_COLOR = new Color(76, 175, 80);
     public static final Color ACCENT_HOVER = new Color(96, 200, 100);
 
-    // Progress / sliders
+    // text Colour
+    public static final java.awt.Color TEXT_COLOR = java.awt.Color.WHITE;
+
+    // Progress sliders
     public static final Color PROGRESS_BG = new Color(32, 32, 32);
     public static final Color PROGRESS_FG = new Color(129, 199, 132);
 
@@ -33,7 +37,7 @@ public class Theme {
     private static final Font LABEL_FONT = BASE_FONT.deriveFont(Font.PLAIN, 13f);
 
   
-    public static void styleButton(JButton button) {
+    public static void styleButton(AbstractButton button) {
         button.setBackground(ACCENT_COLOR);
         button.setForeground(FG_COLOR);
         button.setFont(BUTTON_FONT);

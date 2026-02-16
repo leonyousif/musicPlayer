@@ -2,6 +2,8 @@ package leon.music;
 
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.File;
 
 import javax.swing.JButton;
@@ -14,20 +16,21 @@ import javax.swing.JSlider;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.DefaultListModel;
+import javax.swing.JList;
+import javax.swing.JScrollPane;
+import javax.swing.JToggleButton;
+import javax.swing.ListSelectionModel;
 
 import org.jaudiotagger.audio.AudioFile;
 import org.jaudiotagger.audio.AudioFileIO;
 import org.jaudiotagger.tag.FieldKey;
 import org.jaudiotagger.tag.Tag;
 
-import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
-import uk.co.caprica.vlcj.player.base.MediaPlayer;
-
 public class Main {
 
     // VLCJ
-    private MediaPlayerFactory factory;
-    private MediaPlayer player;
+    private final MusicPlayer musicPlayer = new MusicPlayer();
 
     // new mp3 path
     private String currentMediaPath = null;
@@ -42,37 +45,49 @@ public class Main {
     private JSlider volumeSlider;
     private Timer progressTimer;
 
+    // Playlist system
+    private final PlaylistManager playlistManager = new PlaylistManager();
+
+    private JList<File> trackList;
+    private DefaultListModel<File> trackListModel;
+
+    private JButton openFolderButton;
+    private JButton nextButton;
+    private JButton prevButton;
+    private JToggleButton shuffleToggle;
+
     private boolean isSeeking = false;
 
     private JLabel trackInfoLabel;
     private JLabel timeLabel;
 
     public Main() {
-        initVlcj();
+        musicPlayer.init();
         createAndShowGui();
     }
 
-    private void initVlcj() {
-        try {
-
-            factory = new MediaPlayerFactory();
-            player = factory.mediaPlayers().newMediaPlayer();
-            player.audio().setVolume(100);
-        } catch (Throwable t) {
-            // If VLC native libs can't be loaded, show an error and exit
-            JOptionPane.showMessageDialog(
-                    null,
-                    "Could not load VLC native libraries.\n" +
-                            "Check that VLC is installed at E:\\VLC and is 64-bit.",
-                    "VLC error",
-                    JOptionPane.ERROR_MESSAGE);
-            t.printStackTrace();
-            System.exit(1);
-        }
-    }
-
     private void createAndShowGui() {
-        frame = new JFrame("Leon VLCJ Music Player");
+        frame = new JFrame("VLCJ Music Player");
+
+        // Playlist
+        trackListModel = new DefaultListModel<>();
+        trackList = new JList<>(trackListModel);
+        trackList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        trackList.setBackground(Theme.BG_COLOR);
+        trackList.setForeground(Theme.TEXT_COLOR);
+
+        trackList.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    int idx = trackList.locationToIndex(e.getPoint());
+                    if (idx >= 0) {
+                        playlistManager.setCurrentIndex(idx);
+                        playCurrentFromPlaylist();
+                    }
+                }
+            }
+        });
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.getContentPane().setBackground(Theme.BG_COLOR);
 
@@ -95,9 +110,40 @@ public class Main {
         timeLabel = new JLabel("00:00 / 00:00");
         Theme.styleLabel(timeLabel);
 
+        // Playlist buttons
+        prevButton = new JButton("Prev");
+        Theme.styleButton(prevButton);
+
+        nextButton = new JButton("Next");
+        Theme.styleButton(nextButton);
+
+        shuffleToggle = new JToggleButton("Shuffle");
+        Theme.styleButton(shuffleToggle);
+
+        openFolderButton = new JButton("Open Folder");
+        Theme.styleButton(openFolderButton);
+
         playPauseButton.addActionListener(e -> onPlayPause());
         openButton.addActionListener(e -> onOpenFile());
         stopButton.addActionListener(e -> onStop());
+
+        prevButton.addActionListener(e -> {
+            playlistManager.previous();
+            playCurrentFromPlaylist();
+        });
+
+        nextButton.addActionListener(e -> {
+            playlistManager.next();
+            playCurrentFromPlaylist();
+        });
+
+        shuffleToggle.addActionListener(e -> {
+            playlistManager.setShuffleEnabled(shuffleToggle.isSelected());
+            statusLabel.setText("Status: shuffle " +
+                    (shuffleToggle.isSelected() ? "on" : "off"));
+        });
+
+        openFolderButton.addActionListener(e -> onOpenFolder());
 
         JPanel topPanel = new JPanel(new BorderLayout());
         Theme.stylePanel(topPanel);
@@ -108,18 +154,22 @@ public class Main {
         // Button panel
         JPanel buttonPanel = new JPanel();
         Theme.stylePanel(buttonPanel);
+        buttonPanel.add(prevButton);
         buttonPanel.add(playPauseButton);
+        buttonPanel.add(nextButton);
         buttonPanel.add(stopButton);
         buttonPanel.add(openButton);
+        buttonPanel.add(openFolderButton);
+        buttonPanel.add(shuffleToggle);
 
         volumeSlider = new JSlider(0, 100, 100);
         Theme.styleProgressBar(volumeSlider);
         volumeSlider.setPreferredSize(new Dimension(120, 20));
 
         volumeSlider.addChangeListener(e -> {
-            if (player != null && !volumeSlider.getValueIsAdjusting()) {
+            if (musicPlayer != null && !volumeSlider.getValueIsAdjusting()) {
                 int vol = volumeSlider.getValue();
-                player.audio().setVolume(vol);
+                musicPlayer.setVolume(volumeSlider.getValue());
                 System.out.println("Volume set to: " + vol);
             }
         });
@@ -136,7 +186,7 @@ public class Main {
 
         // listener to handle seeking
         progressBar.addChangeListener(e -> {
-            if (player == null) {
+            if (musicPlayer == null) {
                 return;
             }
 
@@ -145,12 +195,12 @@ public class Main {
                 isSeeking = true;
             } else if (isSeeking) {
                 // user just released the slider perform seek
-                long length = player.status().length();
+                long length = musicPlayer.getLengthMs();
                 if (length > 0) {
                     double fraction = progressBar.getValue() / (double) progressBar.getMaximum();
                     long newTime = (long) (fraction * length);
                     System.out.println("Seeking to time: " + newTime + " ms");
-                    player.controls().setTime(newTime);
+                    musicPlayer.seekToMs(newTime);
                 }
                 isSeeking = false;
             }
@@ -162,6 +212,11 @@ public class Main {
         frame.add(centerPanel, BorderLayout.CENTER);
         frame.add(progressBar, BorderLayout.SOUTH);
 
+        // Playlist
+        JScrollPane scrollPane = new JScrollPane(trackList);
+        scrollPane.setPreferredSize(new Dimension(220, 0));
+        frame.add(scrollPane, BorderLayout.WEST);
+
         // Progress timer
         progressTimer = new Timer(500, e -> updateProgress());
         progressTimer.start();
@@ -169,30 +224,46 @@ public class Main {
         frame.setSize(460, 210);
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
+
+        frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                musicPlayer.release();
+            }
+        });
     }
 
     private void onPlayPause() {
-        if (!player.status().isPlaying()) {
-            // Not playing → start playback
-            statusLabel.setText("Status: playing");
-            playPauseButton.setText("Pause");
-            player.media().play(currentMediaPath);
+        if (currentMediaPath == null) {
+            JOptionPane.showMessageDialog(frame, "Open a file first.");
+            return;
+        }
+
+        if (!musicPlayer.isPlaying()) {
+            boolean started = musicPlayer.play(currentMediaPath);
+            if (started) {
+                statusLabel.setText("Playing");
+                playPauseButton.setText("Pause");
+                if (!progressTimer.isRunning())
+                    progressTimer.start();
+            } else {
+                statusLabel.setText("Failed to play");
+            }
         } else {
-            // Already playing → pause
-            player.controls().pause();
-            statusLabel.setText("Status: paused");
+            musicPlayer.pause();
+            statusLabel.setText("Paused");
             playPauseButton.setText("Play");
         }
     }
 
     private void onStop() {
-        if (player != null) {
-            System.out.println("Stopping playback.");
-            player.controls().stop();
-            statusLabel.setText("Status: stopped");
-            playPauseButton.setText("Play");
-            progressBar.setValue(0);
-        }
+        musicPlayer.stop();
+        statusLabel.setText("Stopped");
+        playPauseButton.setText("Play");
+
+        progressBar.setValue(0);
+        timeLabel.setText("00:00 / 00:00");
     }
 
     private void onOpenFile() {
@@ -212,20 +283,18 @@ public class Main {
 
             currentMediaPath = selected.getAbsolutePath();
 
-            
             updateMetadata(selected); // see method below
 
-            
             progressBar.setValue(0);
             timeLabel.setText("00:00 / 00:00");
 
-            if (player.status().isPlaying()) {
-                player.controls().stop();
+            if (musicPlayer.isPlaying()) {
+                musicPlayer.stop();
             }
 
             statusLabel.setText("Status: loading " + selected.getName());
 
-            boolean started = player.media().play(currentMediaPath);
+            boolean started = musicPlayer.play(currentMediaPath);
             System.out.println("media().play(...) returned: " + started);
 
             if (started) {
@@ -267,7 +336,7 @@ public class Main {
 
             trackInfoLabel.setText(sb.toString());
         } catch (Exception e) {
-            
+
             trackInfoLabel.setText(audioFile.getName());
             System.out.println("Could not read metadata: " + e.getMessage());
         }
@@ -281,24 +350,72 @@ public class Main {
     }
 
     private void updateProgress() {
-        if (player == null || isSeeking) {
-            
+        if (isSeeking)
+            return;
+
+        long length = musicPlayer.getLengthMs();
+        long time = musicPlayer.getTimeMs();
+
+        if (length > 0) {
+            int value = (int) ((time * 1000) / length);
+            progressBar.setValue(value);
+            timeLabel.setText(formatTime(time) + " / " + formatTime(length));
+        }
+    }
+
+    private void onOpenFolder() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Choose a music folder");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+
+        int result = chooser.showOpenDialog(frame);
+        if (result != JFileChooser.APPROVE_OPTION)
+            return;
+
+        File folder = chooser.getSelectedFile();
+        if (folder == null)
+            return;
+
+        var files = playlistManager.loadFolder(folder);
+
+        trackListModel.clear();
+        for (File f : files)
+            trackListModel.addElement(f);
+
+        if (playlistManager.size() == 0) {
+            statusLabel.setText("Status: no audio files found");
+            trackInfoLabel.setText("No audio files in folder");
+            currentMediaPath = null;
             return;
         }
 
-        long length = player.status().length();
-        long time = player.status().time();
+        trackList.setSelectedIndex(0);
+        statusLabel.setText("Status: loaded " + playlistManager.size() + " tracks");
+        playCurrentFromPlaylist();
+    }
 
-        if (length <= 0 || time < 0) {
-            progressBar.setValue(0);
+    private void playCurrentFromPlaylist() {
+        File current = playlistManager.getCurrent();
+        if (current == null)
             return;
+
+        currentMediaPath = current.getAbsolutePath();
+
+        updateMetadata(current);
+        progressBar.setValue(0);
+        timeLabel.setText("00:00 / 00:00");
+
+        musicPlayer.stop();
+        boolean started = musicPlayer.play(currentMediaPath);
+
+        if (started) {
+            playPauseButton.setText("Pause");
+            statusLabel.setText("Status: playing " + current.getName());
+            if (!progressTimer.isRunning())
+                progressTimer.start();
+        } else {
+            statusLabel.setText("Status: failed to start playback");
         }
-
-        double fraction = (double) time / (double) length;
-        int sliderValue = (int) (fraction * progressBar.getMaximum());
-        progressBar.setValue(sliderValue);
-
-        timeLabel.setText(formatTime(time) + " / " + formatTime(length));
     }
 
     public static void main(String[] args) {
