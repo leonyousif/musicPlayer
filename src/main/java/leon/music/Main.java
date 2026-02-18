@@ -261,7 +261,7 @@ public class Main {
     }
 
     private void onStop() {
-        musicPlayer.stop();
+        musicPlayer.stopByUser();
         statusLabel.setText("Stopped");
         playPauseButton.setText("Play");
 
