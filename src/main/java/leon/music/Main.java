@@ -63,6 +63,9 @@ public class Main {
 
     public Main() {
         musicPlayer.init();
+
+        musicPlayer.setOnFinished(() -> SwingUtilities.invokeLater(this::playNextFromPlaylist));
+
         createAndShowGui();
     }
 
@@ -416,6 +419,21 @@ public class Main {
         } else {
             statusLabel.setText("Status: failed to start playback");
         }
+    }
+
+    private void playNextFromPlaylist() {
+        if (playlistManager.size() == 0)
+            return;
+
+        playlistManager.next();
+
+        int idx = playlistManager.getCurrentIndex();
+        if (idx >= 0 && idx < trackListModel.getSize()) {
+            trackList.setSelectedIndex(idx);
+            trackList.ensureIndexIsVisible(idx);
+        }
+
+        playCurrentFromPlaylist();
     }
 
     public static void main(String[] args) {
