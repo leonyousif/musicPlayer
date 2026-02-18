@@ -5,7 +5,6 @@ import uk.co.caprica.vlcj.player.base.MediaPlayer;
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 
-
 import javax.swing.JOptionPane;
 
 public class MusicPlayer {
@@ -13,6 +12,7 @@ public class MusicPlayer {
     private MediaPlayerFactory factory;
     private MediaPlayer player;
     private Runnable onFinished;
+    private boolean ignoreNextFinished = false;
 
     public void init() {
         try {
@@ -22,9 +22,11 @@ public class MusicPlayer {
             player.events().addMediaPlayerEventListener(new MediaPlayerEventAdapter() {
                 @Override
                 public void finished(MediaPlayer mediaPlayer) {
-                    if (onFinished != null) {
-                        onFinished.run();
+                    if (ignoreNextFinished) {
+                        ignoreNextFinished = false;
+                        return;
                     }
+                    if (onFinished != null) onFinished.run();
                 }
             });
         } catch (Throwable t) {
@@ -92,6 +94,11 @@ public class MusicPlayer {
 
     public void setOnFinished(Runnable onFinished) {
         this.onFinished = onFinished;
+    }
+
+    public void stopByUser() {
+        ignoreNextFinished = true;
+        stop();
     }
 
     public void release() {
