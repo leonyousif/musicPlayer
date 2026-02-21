@@ -91,6 +91,26 @@ public class Main {
                 }
             }
         });
+
+        trackList.setCellRenderer((list, value, index, isSelected, cellHasFocus) -> {
+            String name = (value == null) ? "" : value.getName();
+            boolean isCurrent = index == playlistManager.getCurrentIndex();
+
+            JLabel label = new JLabel((isCurrent ? "▶ " : "  ") + name);
+            Theme.styleLabel(label);
+            label.setOpaque(true);
+
+            if (isSelected) {
+                label.setBackground(Theme.ACCENT_COLOR);
+            } else if (isCurrent) {
+                label.setBackground(Theme.PROGRESS_BG);
+            } else {
+                label.setBackground(Theme.BG_COLOR);
+            }
+
+            return label;
+        });
+
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.getContentPane().setBackground(Theme.BG_COLOR);
 
@@ -243,20 +263,31 @@ public class Main {
             return;
         }
 
-        if (!musicPlayer.isPlaying()) {
-            boolean started = musicPlayer.play(currentMediaPath);
-            if (started) {
-                statusLabel.setText("Playing");
-                playPauseButton.setText("Pause");
-                if (!progressTimer.isRunning())
-                    progressTimer.start();
-            } else {
-                statusLabel.setText("Failed to play");
-            }
-        } else {
-            musicPlayer.pause();
+        if (musicPlayer.isPlaying()) {
+            musicPlayer.pause(); 
             statusLabel.setText("Paused");
             playPauseButton.setText("Play");
+            trackList.repaint(); 
+            return;
+        }
+
+        if (musicPlayer.isPaused()) {
+            musicPlayer.pause(); 
+            statusLabel.setText("Playing");
+            playPauseButton.setText("Pause");
+            if (!progressTimer.isRunning())
+                progressTimer.start();
+            return;
+        }
+
+        boolean started = musicPlayer.play(currentMediaPath); 
+        if (started) {
+            statusLabel.setText("Playing");
+            playPauseButton.setText("Pause");
+            if (!progressTimer.isRunning())
+                progressTimer.start();
+        } else {
+            statusLabel.setText("Failed to play");
         }
     }
 
@@ -404,6 +435,12 @@ public class Main {
 
         currentMediaPath = current.getAbsolutePath();
 
+        int idx = playlistManager.getCurrentIndex();
+        if (idx >= 0 && idx < trackListModel.getSize()) {
+            trackList.setSelectedIndex(idx);
+            trackList.ensureIndexIsVisible(idx);
+        }
+
         updateMetadata(current);
         progressBar.setValue(0);
         timeLabel.setText("00:00 / 00:00");
@@ -419,6 +456,9 @@ public class Main {
         } else {
             statusLabel.setText("Status: failed to start playback");
         }
+
+        trackList.repaint();
+
     }
 
     private void playNextFromPlaylist() {

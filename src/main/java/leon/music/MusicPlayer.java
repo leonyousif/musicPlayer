@@ -3,7 +3,7 @@ package leon.music;
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
-import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
+//import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 
 import javax.swing.JOptionPane;
 
@@ -13,6 +13,7 @@ public class MusicPlayer {
     private MediaPlayer player;
     private Runnable onFinished;
     private boolean ignoreNextFinished = false;
+    private boolean paused = false;
 
     public void init() {
         try {
@@ -26,7 +27,8 @@ public class MusicPlayer {
                         ignoreNextFinished = false;
                         return;
                     }
-                    if (onFinished != null) onFinished.run();
+                    if (onFinished != null)
+                        onFinished.run();
                 }
             });
         } catch (Throwable t) {
@@ -53,6 +55,8 @@ public class MusicPlayer {
             return false;
         if (mediaPath == null || mediaPath.isBlank())
             return false;
+
+        paused = false;
         return player.media().play(mediaPath);
     }
 
@@ -60,12 +64,14 @@ public class MusicPlayer {
         if (player == null)
             return;
         player.controls().pause();
+        paused = !paused;
     }
 
     public void stop() {
         if (player == null)
             return;
         player.controls().stop();
+        paused = false;
     }
 
     public void setVolume(int volume) {
@@ -99,6 +105,10 @@ public class MusicPlayer {
     public void stopByUser() {
         ignoreNextFinished = true;
         stop();
+    }
+
+    public boolean isPaused() {
+        return paused;
     }
 
     public void release() {
