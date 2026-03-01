@@ -27,10 +27,16 @@ import org.jaudiotagger.audio.AudioFileIO;
 import org.jaudiotagger.tag.FieldKey;
 import org.jaudiotagger.tag.Tag;
 
+import uk.co.caprica.vlcj.player.base.callback.AudioCallbackAdapter;
+
 public class Main {
 
     // VLCJ
     private final MusicPlayer musicPlayer = new MusicPlayer();
+
+    // visulaiser
+    private AudioCallbackAdapter audioCallback;
+    private volatile WaveVisualizer visualizer;
 
     // new mp3 path
     private String currentMediaPath = null;
@@ -63,10 +69,13 @@ public class Main {
 
     public Main() {
         musicPlayer.init();
-
         musicPlayer.setOnFinished(() -> SwingUtilities.invokeLater(this::playNextFromPlaylist));
 
         createAndShowGui();
+    }
+
+    public void setVisualizer(WaveVisualizer panel) {
+        this.visualizer = panel;
     }
 
     private void createAndShowGui() {
@@ -86,7 +95,7 @@ public class Main {
                     int idx = trackList.locationToIndex(e.getPoint());
                     if (idx >= 0) {
                         playlistManager.setCurrentIndex(idx);
-                        playCurrentFromPlaylist();
+                        playCurrentFromPlaylist();  
                     }
                 }
             }
@@ -197,9 +206,15 @@ public class Main {
             }
         });
 
+        // wave panel
+        WaveVisualizer wavePanel = new WaveVisualizer();
+        wavePanel.setGain(1.6f);
+        musicPlayer.setVisualizer(wavePanel);
+
         // Center panel
         JPanel centerPanel = new JPanel(new BorderLayout());
         Theme.stylePanel(centerPanel);
+        centerPanel.add(wavePanel, BorderLayout.NORTH);
         centerPanel.add(buttonPanel, BorderLayout.CENTER);
         centerPanel.add(volumeSlider, BorderLayout.SOUTH);
 
@@ -264,15 +279,15 @@ public class Main {
         }
 
         if (musicPlayer.isPlaying()) {
-            musicPlayer.pause(); 
+            musicPlayer.pause();
             statusLabel.setText("Paused");
             playPauseButton.setText("Play");
-            trackList.repaint(); 
+            trackList.repaint();
             return;
         }
 
         if (musicPlayer.isPaused()) {
-            musicPlayer.pause(); 
+            musicPlayer.pause();
             statusLabel.setText("Playing");
             playPauseButton.setText("Pause");
             if (!progressTimer.isRunning())
@@ -280,7 +295,7 @@ public class Main {
             return;
         }
 
-        boolean started = musicPlayer.play(currentMediaPath); 
+        boolean started = musicPlayer.play(currentMediaPath);
         if (started) {
             statusLabel.setText("Playing");
             playPauseButton.setText("Pause");

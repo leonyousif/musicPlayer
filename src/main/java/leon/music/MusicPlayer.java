@@ -1,13 +1,29 @@
 package leon.music;
 
+import com.sun.jna.Pointer;
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.DataLine;
+import javax.sound.sampled.SourceDataLine;
+
+import uk.co.caprica.vlcj.player.base.callback.AudioCallback;
+import uk.co.caprica.vlcj.player.base.callback.AudioCallbackAdapter;
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 //import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
+import java.util.ArrayList;
+import java.util.List;
+
+import uk.co.caprica.vlcj.player.base.Equalizer;
 
 import javax.swing.JOptionPane;
 
 public class MusicPlayer {
+
+    // fixing audio
+    private SourceDataLine speakerLine;
+    private AudioFormat speakerFormat;
 
     private MediaPlayerFactory factory;
     private MediaPlayer player;
@@ -15,10 +31,36 @@ public class MusicPlayer {
     private boolean ignoreNextFinished = false;
     private boolean paused = false;
 
+    // for visualiser
+    private volatile WaveVisualizer visualizer;
+    private AudioCallbackAdapter audioCallback;
+
+    private static final String PCM_FORMAT = "S16N";
+    private static final int PCM_RATE = 44100;
+    private static final int PCM_CHANNELS = 2;
+
     public void init() {
         try {
             factory = new MediaPlayerFactory();
             player = factory.mediaPlayers().newMediaPlayer();
+            speakerFormat = new AudioFormat( // java sound output
+                    PCM_RATE, // sample rate
+                    16, // bits
+                    PCM_CHANNELS, // channels
+                    true, // signed
+                    false // little-endian 
+            );
+
+            try {
+                DataLine.Info info = new DataLine.Info(SourceDataLine.class, speakerFormat);
+                speakerLine = (SourceDataLine) AudioSystem.getLine(info);
+                speakerLine.open(speakerFormat, PCM_RATE); // buffer ~1 second
+                speakerLine.start();
+            } catch (Exception e) {
+                speakerLine = null; 
+                e.printStackTrace();
+            }
+
             player.audio().setVolume(100);
             player.events().addMediaPlayerEventListener(new MediaPlayerEventAdapter() {
                 @Override
@@ -31,7 +73,64 @@ public class MusicPlayer {
                         onFinished.run();
                 }
             });
-        } catch (Throwable t) {
+
+            audioCallback = new AudioCallbackAdapter() {
+                @Override
+                public void play(MediaPlayer mediaPlayer, Pointer samples, int sampleCount, long pts) {
+                    
+                    try {
+                        WaveVisualizer v = visualizer;
+                        if (v == null)
+                            return;
+
+                        int bytes = sampleCount * PCM_CHANNELS * 2;
+                        if (bytes <= 0)
+                            return;
+
+                        byte[] pcm = samples.getByteArray(0, bytes);
+                        if (speakerLine != null) {
+                            speakerLine.write(pcm, 0, pcm.length);
+                        }
+
+                        int bytesPerFrame = PCM_CHANNELS * 2;
+                        int totalFrames = pcm.length / bytesPerFrame;
+                        if (totalFrames <= 0)
+                            return;
+
+                        int target = 256;
+                        int step = Math.max(1, totalFrames / target);
+
+                        float[] mono = new float[Math.max(1, totalFrames / step)];
+                        int out = 0;
+
+                        for (int i = 0; i < totalFrames; i += step) {
+                            int base = i * bytesPerFrame;
+
+                            // guard prevents out of range
+                            if (base + (bytesPerFrame - 1) >= pcm.length)
+                                break;
+
+                            short l = (short) ((pcm[base + 1] << 8) | (pcm[base] & 0xff));
+                            short r = (short) ((pcm[base + 3] << 8) | (pcm[base + 2] & 0xff));
+
+                            mono[out++] = ((l / 32768f) + (r / 32768f)) * 0.5f;
+                        }
+
+                        if (v != null)
+                            v.pushSamples(mono);
+                    } catch (Throwable t) {
+
+                    }
+
+                }
+            };
+
+            // enable callback
+            player.audio().callback(PCM_FORMAT, PCM_RATE, PCM_CHANNELS, audioCallback, false);
+
+        } catch (
+
+        Throwable t) {
             JOptionPane.showMessageDialog(
                     null,
                     "Could not load VLC native libraries.\nCheck that VLC is installed at E:\\VLC and is 64-bit.",
@@ -111,15 +210,28 @@ public class MusicPlayer {
         return paused;
     }
 
+    public void setVisualizer(WaveVisualizer panel) {
+        this.visualizer = panel;
+    }
+
     public void release() {
+
+        try {
+            if (speakerLine != null) {
+                speakerLine.drain();
+                speakerLine.stop();
+                speakerLine.close();
+                speakerLine = null;
+            }
+        } catch (Exception ignored) {}
+
         try {
             if (player != null) {
                 player.controls().stop();
                 player.release();
                 player = null;
             }
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) {}
 
         try {
             if (factory != null) {
