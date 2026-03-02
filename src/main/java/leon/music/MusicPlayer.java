@@ -48,7 +48,7 @@ public class MusicPlayer {
                     16, // bits
                     PCM_CHANNELS, // channels
                     true, // signed
-                    false // little-endian 
+                    false // little-endian
             );
 
             try {
@@ -57,7 +57,7 @@ public class MusicPlayer {
                 speakerLine.open(speakerFormat, PCM_RATE); // buffer ~1 second
                 speakerLine.start();
             } catch (Exception e) {
-                speakerLine = null; 
+                speakerLine = null;
                 e.printStackTrace();
             }
 
@@ -77,7 +77,7 @@ public class MusicPlayer {
             audioCallback = new AudioCallbackAdapter() {
                 @Override
                 public void play(MediaPlayer mediaPlayer, Pointer samples, int sampleCount, long pts) {
-                    
+
                     try {
                         WaveVisualizer v = visualizer;
                         if (v == null)
@@ -115,8 +115,35 @@ public class MusicPlayer {
 
                             mono[out++] = ((l / 32768f) + (r / 32768f)) * 0.5f;
                         }
+                        // --- Auto-gain for visualiser (keeps wave visible at low volume) ---
+                        float sumSq = 0f;
+                        for (int i = 0; i < out; i++) {
+                            float s = mono[i];
+                            sumSq += s * s;
+                        }
 
+                        float rms = (out > 0) ? (float) Math.sqrt(sumSq / out) : 0f;
+
+                        // Target RMS controls the wave height (try 0.12–0.20)
+                        float targetRms = 0.15f;
+
+                        // Gain factor to normalize to target loudness
+                        float gain = (rms > 1e-6f) ? (targetRms / rms) : 1f;
+
+                        // Clamp gain so silence/noise doesn't explode
+                        gain = Math.max(0.5f, Math.min(6.0f, gain));
+
+                        // Apply gain + clamp to [-1, 1]
+                        for (int i = 0; i < out; i++) {
+                            float s = mono[i] * gain;
+                            if (s > 1f)
+                                s = 1f;
+                            if (s < -1f)
+                                s = -1f;
+                            mono[i] = s;
+                        }
                         if (v != null)
+
                             v.pushSamples(mono);
                     } catch (Throwable t) {
 
@@ -223,7 +250,8 @@ public class MusicPlayer {
                 speakerLine.close();
                 speakerLine = null;
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         try {
             if (player != null) {
@@ -231,7 +259,8 @@ public class MusicPlayer {
                 player.release();
                 player = null;
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         try {
             if (factory != null) {
