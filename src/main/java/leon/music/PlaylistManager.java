@@ -59,6 +59,16 @@ public class PlaylistManager {
         return playlist.get(currentIndex);
     }
 
+    public List<File> loadFile(File file) {
+        clear();
+
+        if (isAudioFile(file)) {
+            playlist.add(file);
+            currentIndex = 0;
+        }
+
+        return getAll();
+    }
 
     // Loads files from a folder sorted by name and returns the loaded list
     public List<File> loadFolder(File folder) {
@@ -92,6 +102,10 @@ public class PlaylistManager {
             } while (nextIndex == currentIndex);
             currentIndex = nextIndex;
         } else {
+            if (currentIndex < 0) {
+                currentIndex = 0;
+                return getCurrent();
+            }
             currentIndex = (currentIndex + 1) % playlist.size();
         }
 
@@ -108,10 +122,20 @@ public class PlaylistManager {
             } while (prevIndex == currentIndex);
             currentIndex = prevIndex;
         } else {
+            if (currentIndex < 0) {
+                currentIndex = playlist.size() - 1;
+                return getCurrent();
+            }
             currentIndex = (currentIndex - 1 + playlist.size()) % playlist.size();
         }
 
         return getCurrent();
+    }
+
+    public boolean hasAutomaticNext() {
+        if (playlist.isEmpty()) return false;
+        if (shuffleEnabled) return playlist.size() > 1;
+        return currentIndex >= 0 && currentIndex < playlist.size() - 1;
     }
 
     public static boolean isAudioFile(File file) {

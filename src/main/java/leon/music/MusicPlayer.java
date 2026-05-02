@@ -6,16 +6,11 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.SourceDataLine;
 
-import uk.co.caprica.vlcj.player.base.callback.AudioCallback;
 import uk.co.caprica.vlcj.player.base.callback.AudioCallbackAdapter;
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 //import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
-import java.util.ArrayList;
-import java.util.List;
-
-import uk.co.caprica.vlcj.player.base.Equalizer;
 
 import javax.swing.JOptionPane;
 
@@ -29,11 +24,16 @@ public class MusicPlayer {
     private MediaPlayer player;
     private Runnable onFinished;
     private boolean ignoreNextFinished = false;
+    private long ignoreFinishedUntilNanos = 0L;
     private boolean paused = false;
+    private volatile boolean releasing = false;
 
     // for visualiser
     private volatile WaveVisualizer visualizer;
     private AudioCallbackAdapter audioCallback;
+    private volatile float outputVolume = 1.0f;
+    private volatile int currentVolume = 100;
+    private boolean audioCallbackWarned = false;
 
     private static final String PCM_FORMAT = "S16N";
     private static final int PCM_RATE = 44100;
@@ -65,10 +65,16 @@ public class MusicPlayer {
             player.events().addMediaPlayerEventListener(new MediaPlayerEventAdapter() {
                 @Override
                 public void finished(MediaPlayer mediaPlayer) {
-                    if (ignoreNextFinished) {
+                    if (releasing) {
+                        return;
+                    }
+                    if (ignoreNextFinished && System.nanoTime() <= ignoreFinishedUntilNanos) {
                         ignoreNextFinished = false;
                         return;
                     }
+                    ignoreNextFinished = false;
+                    paused = false;
+                    setVisualizerActive(false);
                     if (onFinished != null)
                         onFinished.run();
                 }
@@ -79,17 +85,15 @@ public class MusicPlayer {
                 public void play(MediaPlayer mediaPlayer, Pointer samples, int sampleCount, long pts) {
 
                     try {
-                        WaveVisualizer v = visualizer;
-                        if (v == null)
-                            return;
-
                         int bytes = sampleCount * PCM_CHANNELS * 2;
                         if (bytes <= 0)
                             return;
 
                         byte[] pcm = samples.getByteArray(0, bytes);
+
                         if (speakerLine != null) {
-                            speakerLine.write(pcm, 0, pcm.length);
+                            byte[] outputPcm = applyVolume(pcm, outputVolume);
+                            speakerLine.write(outputPcm, 0, outputPcm.length);
                         }
 
                         int bytesPerFrame = PCM_CHANNELS * 2;
@@ -100,7 +104,7 @@ public class MusicPlayer {
                         int target = 256;
                         int step = Math.max(1, totalFrames / target);
 
-                        float[] mono = new float[Math.max(1, totalFrames / step)];
+                        float[] mono = new float[Math.max(1, (totalFrames + step - 1) / step)];
                         int out = 0;
 
                         for (int i = 0; i < totalFrames; i += step) {
@@ -115,7 +119,7 @@ public class MusicPlayer {
 
                             mono[out++] = ((l / 32768f) + (r / 32768f)) * 0.5f;
                         }
-                        // --- Auto-gain for visualiser (keeps wave visible at low volume) ---
+                        // Auto-gain keeps the visualiser visible at low volume.
                         float sumSq = 0f;
                         for (int i = 0; i < out; i++) {
                             float s = mono[i];
@@ -124,7 +128,7 @@ public class MusicPlayer {
 
                         float rms = (out > 0) ? (float) Math.sqrt(sumSq / out) : 0f;
 
-                        // Target RMS controls the wave height (try 0.12–0.20)
+                        // Target RMS controls the wave height.
                         float targetRms = 0.15f;
 
                         // Gain factor to normalize to target loudness
@@ -142,11 +146,17 @@ public class MusicPlayer {
                                 s = -1f;
                             mono[i] = s;
                         }
-                        if (v != null)
-
+                        WaveVisualizer v = visualizer;
+                        if (v != null) {
                             v.pushSamples(mono);
-                    } catch (Throwable t) {
+                        }
 
+                    } catch (Throwable t) {
+                        if (!audioCallbackWarned) {
+                            audioCallbackWarned = true;
+                            System.out.println("Visualizer audio callback failed: " + t.getMessage());
+                            t.printStackTrace();
+                        }
                     }
 
                 }
@@ -182,8 +192,12 @@ public class MusicPlayer {
         if (mediaPath == null || mediaPath.isBlank())
             return false;
 
+        releasing = false;
         paused = false;
-        return player.media().play(mediaPath);
+        boolean started = player.media().play(mediaPath);
+        player.audio().setVolume(currentVolume);
+        setVisualizerActive(started);
+        return started;
     }
 
     public void pause() {
@@ -191,6 +205,7 @@ public class MusicPlayer {
             return;
         player.controls().pause();
         paused = !paused;
+        setVisualizerActive(!paused);
     }
 
     public void stop() {
@@ -198,12 +213,15 @@ public class MusicPlayer {
             return;
         player.controls().stop();
         paused = false;
+        setVisualizerActive(false);
     }
 
     public void setVolume(int volume) {
+        currentVolume = Math.max(0, Math.min(100, volume));
+        outputVolume = currentVolume / 100f;
         if (player == null)
             return;
-        player.audio().setVolume(volume);
+        player.audio().setVolume(currentVolume);
     }
 
     public long getLengthMs() {
@@ -229,7 +247,10 @@ public class MusicPlayer {
     }
 
     public void stopByUser() {
-        ignoreNextFinished = true;
+        if (isPlaying() || paused) {
+            ignoreNextFinished = true;
+            ignoreFinishedUntilNanos = System.nanoTime() + 1_500_000_000L;
+        }
         stop();
     }
 
@@ -241,11 +262,49 @@ public class MusicPlayer {
         this.visualizer = panel;
     }
 
+    private void setVisualizerActive(boolean active) {
+        WaveVisualizer v = visualizer;
+        if (v != null) {
+            v.setActive(active);
+        }
+    }
+
+    private byte[] applyVolume(byte[] pcm, float volume) {
+        if (volume >= 0.995f) {
+            return pcm;
+        }
+
+        byte[] adjusted = pcm.clone();
+        for (int i = 0; i + 1 < adjusted.length; i += 2) {
+            short sample = (short) ((adjusted[i + 1] << 8) | (adjusted[i] & 0xff));
+            int scaled = Math.round(sample * volume);
+            if (scaled > Short.MAX_VALUE)
+                scaled = Short.MAX_VALUE;
+            if (scaled < Short.MIN_VALUE)
+                scaled = Short.MIN_VALUE;
+            adjusted[i] = (byte) (scaled & 0xff);
+            adjusted[i + 1] = (byte) ((scaled >> 8) & 0xff);
+        }
+
+        return adjusted;
+    }
+
     public void release() {
+
+        releasing = true;
+        onFinished = null;
+        setVisualizerActive(false);
+
+        try {
+            if (player != null) {
+                player.controls().stop();
+            }
+        } catch (Exception ignored) {
+        }
 
         try {
             if (speakerLine != null) {
-                speakerLine.drain();
+                speakerLine.flush();
                 speakerLine.stop();
                 speakerLine.close();
                 speakerLine = null;
@@ -255,7 +314,6 @@ public class MusicPlayer {
 
         try {
             if (player != null) {
-                player.controls().stop();
                 player.release();
                 player = null;
             }

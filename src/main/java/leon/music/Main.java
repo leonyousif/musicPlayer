@@ -2,10 +2,12 @@ package leon.music;
 
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.GridLayout;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 
+import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
@@ -13,6 +15,7 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JSlider;
+import javax.swing.JSplitPane;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -21,6 +24,7 @@ import javax.swing.JList;
 import javax.swing.JScrollPane;
 import javax.swing.JToggleButton;
 import javax.swing.ListSelectionModel;
+import javax.swing.SwingConstants;
 
 import org.jaudiotagger.audio.AudioFile;
 import org.jaudiotagger.audio.AudioFileIO;
@@ -61,15 +65,19 @@ public class Main {
     private JButton nextButton;
     private JButton prevButton;
     private JToggleButton shuffleToggle;
+    private JToggleButton repeatToggle;
 
     private boolean isSeeking = false;
+    private boolean repeatEnabled = false;
 
     private JLabel trackInfoLabel;
     private JLabel timeLabel;
+    private JLabel playlistCountLabel;
+    private WaveVisualizer wavePanel;
 
     public Main() {
         musicPlayer.init();
-        musicPlayer.setOnFinished(() -> SwingUtilities.invokeLater(this::playNextFromPlaylist));
+        musicPlayer.setOnFinished(() -> SwingUtilities.invokeLater(this::handlePlaybackFinished));
 
         createAndShowGui();
     }
@@ -85,8 +93,10 @@ public class Main {
         trackListModel = new DefaultListModel<>();
         trackList = new JList<>(trackListModel);
         trackList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        trackList.setBackground(Theme.BG_COLOR);
+        trackList.setBackground(Theme.SURFACE_COLOR);
         trackList.setForeground(Theme.TEXT_COLOR);
+        trackList.setFixedCellHeight(42);
+        trackList.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
 
         trackList.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -105,22 +115,27 @@ public class Main {
             String name = (value == null) ? "" : value.getName();
             boolean isCurrent = index == playlistManager.getCurrentIndex();
 
-            JLabel label = new JLabel((isCurrent ? "▶ " : "  ") + name);
+            JLabel label = new JLabel((isCurrent ? ">> " : "   ") + name);
             Theme.styleLabel(label);
             label.setOpaque(true);
+            label.setBorder(BorderFactory.createEmptyBorder(7, 10, 7, 10));
+            label.setToolTipText(name);
 
             if (isSelected) {
                 label.setBackground(Theme.ACCENT_COLOR);
+                label.setForeground(Theme.FG_COLOR);
             } else if (isCurrent) {
                 label.setBackground(Theme.PROGRESS_BG);
+                label.setForeground(Theme.ACCENT_ALT);
             } else {
-                label.setBackground(Theme.BG_COLOR);
+                label.setBackground(Theme.SURFACE_COLOR);
+                label.setForeground(Theme.TEXT_COLOR);
             }
 
             return label;
         });
 
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         frame.getContentPane().setBackground(Theme.BG_COLOR);
 
         // Buttons
@@ -128,32 +143,39 @@ public class Main {
         Theme.styleButton(playPauseButton);
 
         stopButton = new JButton("Stop");
-        Theme.styleButton(stopButton);
+        Theme.styleSecondaryButton(stopButton);
 
-        openButton = new JButton("Open");
-        Theme.styleButton(openButton);
+        openButton = new JButton("Open File");
+        Theme.styleSecondaryButton(openButton);
 
         statusLabel = new JLabel("Status: idle");
-        Theme.styleLabel(statusLabel);
+        Theme.styleMutedLabel(statusLabel);
 
         trackInfoLabel = new JLabel("No file loaded");
-        Theme.styleLabel(trackInfoLabel);
+        Theme.styleTitleLabel(trackInfoLabel);
 
         timeLabel = new JLabel("00:00 / 00:00");
-        Theme.styleLabel(timeLabel);
+        Theme.styleMutedLabel(timeLabel);
+        timeLabel.setHorizontalAlignment(SwingConstants.RIGHT);
+
+        playlistCountLabel = new JLabel("0 tracks");
+        Theme.styleMutedLabel(playlistCountLabel);
 
         // Playlist buttons
         prevButton = new JButton("Prev");
-        Theme.styleButton(prevButton);
+        Theme.styleSecondaryButton(prevButton);
 
         nextButton = new JButton("Next");
-        Theme.styleButton(nextButton);
+        Theme.styleSecondaryButton(nextButton);
 
         shuffleToggle = new JToggleButton("Shuffle");
-        Theme.styleButton(shuffleToggle);
+        Theme.styleSecondaryButton(shuffleToggle);
+
+        repeatToggle = new JToggleButton("Repeat");
+        Theme.styleSecondaryButton(repeatToggle);
 
         openFolderButton = new JButton("Open Folder");
-        Theme.styleButton(openFolderButton);
+        Theme.styleSecondaryButton(openFolderButton);
 
         playPauseButton.addActionListener(e -> onPlayPause());
         openButton.addActionListener(e -> onOpenFile());
@@ -175,16 +197,36 @@ public class Main {
                     (shuffleToggle.isSelected() ? "on" : "off"));
         });
 
+        repeatToggle.addActionListener(e -> {
+            repeatEnabled = repeatToggle.isSelected();
+            statusLabel.setText("Status: repeat " +
+                    (repeatEnabled ? "on" : "off"));
+        });
+
         openFolderButton.addActionListener(e -> onOpenFolder());
 
-        JPanel topPanel = new JPanel(new BorderLayout());
+        JPanel topPanel = new JPanel(new BorderLayout(14, 4));
         Theme.stylePanel(topPanel);
-        topPanel.add(trackInfoLabel, BorderLayout.NORTH);
-        topPanel.add(statusLabel, BorderLayout.CENTER);
-        topPanel.add(timeLabel, BorderLayout.SOUTH);
+        Theme.addBottomDivider(topPanel);
+
+        JLabel nowPlayingLabel = new JLabel("Now Playing");
+        Theme.styleMutedLabel(nowPlayingLabel);
+
+        JPanel titlePanel = new JPanel(new BorderLayout(0, 4));
+        titlePanel.setBackground(Theme.BG_COLOR);
+        titlePanel.add(nowPlayingLabel, BorderLayout.NORTH);
+        titlePanel.add(trackInfoLabel, BorderLayout.CENTER);
+
+        JPanel statusPanel = new JPanel(new BorderLayout(0, 4));
+        statusPanel.setBackground(Theme.BG_COLOR);
+        statusPanel.add(statusLabel, BorderLayout.CENTER);
+        statusPanel.add(timeLabel, BorderLayout.SOUTH);
+
+        topPanel.add(titlePanel, BorderLayout.CENTER);
+        topPanel.add(statusPanel, BorderLayout.EAST);
 
         // Button panel
-        JPanel buttonPanel = new JPanel();
+        JPanel buttonPanel = new JPanel(new GridLayout(0, 4, 8, 8));
         Theme.stylePanel(buttonPanel);
         buttonPanel.add(prevButton);
         buttonPanel.add(playPauseButton);
@@ -193,10 +235,11 @@ public class Main {
         buttonPanel.add(openButton);
         buttonPanel.add(openFolderButton);
         buttonPanel.add(shuffleToggle);
+        buttonPanel.add(repeatToggle);
 
         volumeSlider = new JSlider(0, 100, 100);
         Theme.styleProgressBar(volumeSlider);
-        volumeSlider.setPreferredSize(new Dimension(120, 20));
+        volumeSlider.setPreferredSize(new Dimension(160, 28));
 
         volumeSlider.addChangeListener(e -> {
             if (musicPlayer != null && !volumeSlider.getValueIsAdjusting()) {
@@ -207,16 +250,28 @@ public class Main {
         });
 
         // wave panel
-        WaveVisualizer wavePanel = new WaveVisualizer();
+        wavePanel = new WaveVisualizer();
         wavePanel.setGain(1.6f);
         musicPlayer.setVisualizer(wavePanel);
 
         // Center panel
-        JPanel centerPanel = new JPanel(new BorderLayout());
+        JPanel centerPanel = new JPanel(new BorderLayout(0, 18));
         Theme.stylePanel(centerPanel);
-        centerPanel.add(wavePanel, BorderLayout.NORTH);
-        centerPanel.add(buttonPanel, BorderLayout.CENTER);
-        centerPanel.add(volumeSlider, BorderLayout.SOUTH);
+
+        JPanel volumePanel = new JPanel(new BorderLayout(10, 0));
+        Theme.stylePanel(volumePanel);
+        JLabel volumeLabel = new JLabel("Volume");
+        Theme.styleMutedLabel(volumeLabel);
+        volumePanel.add(volumeLabel, BorderLayout.WEST);
+        volumePanel.add(volumeSlider, BorderLayout.CENTER);
+
+        JPanel controlPanel = new JPanel(new BorderLayout(0, 10));
+        Theme.styleSurfacePanel(controlPanel);
+        controlPanel.add(buttonPanel, BorderLayout.CENTER);
+        controlPanel.add(volumePanel, BorderLayout.SOUTH);
+
+        centerPanel.add(wavePanel, BorderLayout.CENTER);
+        centerPanel.add(controlPanel, BorderLayout.SOUTH);
 
         // Progress bar
         progressBar = new JSlider(0, 1000, 0);
@@ -247,26 +302,61 @@ public class Main {
         // Layout
         frame.setLayout(new BorderLayout());
         frame.add(topPanel, BorderLayout.NORTH);
-        frame.add(centerPanel, BorderLayout.CENTER);
-        frame.add(progressBar, BorderLayout.SOUTH);
+
+        JPanel progressPanel = new JPanel(new BorderLayout());
+        Theme.stylePanel(progressPanel);
+        progressPanel.add(progressBar, BorderLayout.CENTER);
+        frame.add(progressPanel, BorderLayout.SOUTH);
 
         // Playlist
         JScrollPane scrollPane = new JScrollPane(trackList);
-        scrollPane.setPreferredSize(new Dimension(220, 0));
-        frame.add(scrollPane, BorderLayout.WEST);
+        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        Theme.styleScrollPane(scrollPane);
+
+        JLabel playlistTitleLabel = new JLabel("Library");
+        Theme.styleTitleLabel(playlistTitleLabel);
+
+        JPanel playlistHeaderPanel = new JPanel(new BorderLayout(8, 0));
+        playlistHeaderPanel.setBackground(Theme.SURFACE_COLOR);
+        playlistHeaderPanel.setBorder(BorderFactory.createEmptyBorder(4, 4, 10, 4));
+        playlistHeaderPanel.add(playlistTitleLabel, BorderLayout.WEST);
+        playlistHeaderPanel.add(playlistCountLabel, BorderLayout.EAST);
+
+        JPanel playlistPanel = new JPanel(new BorderLayout(0, 8));
+        Theme.styleSurfacePanel(playlistPanel);
+        playlistPanel.setMinimumSize(new Dimension(210, 260));
+        playlistPanel.setPreferredSize(new Dimension(280, 0));
+        playlistPanel.add(playlistHeaderPanel, BorderLayout.NORTH);
+        playlistPanel.add(scrollPane, BorderLayout.CENTER);
+
+        centerPanel.setMinimumSize(new Dimension(430, 300));
+
+        JSplitPane contentSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, playlistPanel, centerPanel);
+        contentSplitPane.setBorder(null);
+        contentSplitPane.setDividerSize(5);
+        contentSplitPane.setResizeWeight(0.28);
+        contentSplitPane.setContinuousLayout(true);
+        contentSplitPane.setBackground(Theme.BG_COLOR);
+        frame.add(contentSplitPane, BorderLayout.CENTER);
 
         // Progress timer
         progressTimer = new Timer(500, e -> updateProgress());
         progressTimer.start();
 
-        frame.setSize(460, 210);
+        frame.setMinimumSize(new Dimension(700, 480));
+        frame.setSize(920, 580);
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
 
-        frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         frame.addWindowListener(new WindowAdapter() {
             @Override
-            public void windowClosed(WindowEvent e) {
+            public void windowClosing(WindowEvent e) {
+                if (progressTimer != null) {
+                    progressTimer.stop();
+                }
+                if (wavePanel != null) {
+                    wavePanel.dispose();
+                }
                 musicPlayer.release();
             }
         });
@@ -329,7 +419,12 @@ public class Main {
             File selected = chooser.getSelectedFile();
             if (selected == null)
                 return;
+            if (!PlaylistManager.isAudioFile(selected)) {
+                statusLabel.setText("Status: unsupported audio file");
+                return;
+            }
 
+            loadSingleFileIntoPlaylist(selected);
             currentMediaPath = selected.getAbsolutePath();
 
             updateMetadata(selected); // see method below
@@ -337,8 +432,8 @@ public class Main {
             progressBar.setValue(0);
             timeLabel.setText("00:00 / 00:00");
 
-            if (musicPlayer.isPlaying()) {
-                musicPlayer.stop();
+            if (musicPlayer.isPlaying() || musicPlayer.isPaused()) {
+                musicPlayer.stopByUser();
             }
 
             statusLabel.setText("Status: loading " + selected.getName());
@@ -391,6 +486,19 @@ public class Main {
         }
     }
 
+    private void loadSingleFileIntoPlaylist(File selected) {
+        var files = playlistManager.loadFile(selected);
+
+        trackListModel.clear();
+        for (File f : files)
+            trackListModel.addElement(f);
+
+        playlistCountLabel.setText(playlistManager.size() + " tracks");
+        if (!files.isEmpty()) {
+            trackList.setSelectedIndex(0);
+        }
+    }
+
     private String formatTime(long ms) {
         long totalSeconds = ms / 1000;
         long minutes = totalSeconds / 60;
@@ -431,10 +539,18 @@ public class Main {
         for (File f : files)
             trackListModel.addElement(f);
 
+        playlistCountLabel.setText(playlistManager.size() + " tracks");
+
         if (playlistManager.size() == 0) {
+            if (musicPlayer.isPlaying() || musicPlayer.isPaused()) {
+                musicPlayer.stopByUser();
+            }
             statusLabel.setText("Status: no audio files found");
             trackInfoLabel.setText("No audio files in folder");
             currentMediaPath = null;
+            playPauseButton.setText("Play");
+            progressBar.setValue(0);
+            timeLabel.setText("00:00 / 00:00");
             return;
         }
 
@@ -460,7 +576,9 @@ public class Main {
         progressBar.setValue(0);
         timeLabel.setText("00:00 / 00:00");
 
-        musicPlayer.stop();
+        if (musicPlayer.isPlaying() || musicPlayer.isPaused()) {
+            musicPlayer.stopByUser();
+        }
         boolean started = musicPlayer.play(currentMediaPath);
 
         if (started) {
@@ -489,6 +607,47 @@ public class Main {
         }
 
         playCurrentFromPlaylist();
+    }
+
+    private void handlePlaybackFinished() {
+        if (repeatEnabled) {
+            replayCurrentTrack();
+            return;
+        }
+
+        if (!playlistManager.hasAutomaticNext()) {
+            stopAfterPlaybackFinished();
+            return;
+        }
+
+        playNextFromPlaylist();
+    }
+
+    private void stopAfterPlaybackFinished() {
+        progressBar.setValue(0);
+        timeLabel.setText("00:00 / 00:00");
+        playPauseButton.setText("Play");
+        statusLabel.setText("Status: finished");
+        trackList.repaint();
+    }
+
+    private void replayCurrentTrack() {
+        if (currentMediaPath == null)
+            return;
+
+        progressBar.setValue(0);
+        timeLabel.setText("00:00 / 00:00");
+
+        boolean started = musicPlayer.play(currentMediaPath);
+
+        if (started) {
+            playPauseButton.setText("Pause");
+            statusLabel.setText("Status: repeating");
+            if (!progressTimer.isRunning())
+                progressTimer.start();
+        } else {
+            statusLabel.setText("Status: failed to start playback");
+        }
     }
 
     public static void main(String[] args) {
