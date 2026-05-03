@@ -64,6 +64,7 @@ public class Main {
     private JButton openFolderButton;
     private JButton nextButton;
     private JButton prevButton;
+    private JButton visualizerModeButton;
     private JToggleButton shuffleToggle;
     private JToggleButton repeatToggle;
 
@@ -168,6 +169,9 @@ public class Main {
         nextButton = new JButton("Next");
         Theme.styleSecondaryButton(nextButton);
 
+        visualizerModeButton = new JButton("Waveform");
+        Theme.styleSecondaryButton(visualizerModeButton);
+
         shuffleToggle = new JToggleButton("Shuffle");
         Theme.styleSecondaryButton(shuffleToggle);
 
@@ -236,6 +240,7 @@ public class Main {
         buttonPanel.add(openFolderButton);
         buttonPanel.add(shuffleToggle);
         buttonPanel.add(repeatToggle);
+        buttonPanel.add(visualizerModeButton);
 
         volumeSlider = new JSlider(0, 100, 100);
         Theme.styleProgressBar(volumeSlider);
@@ -253,6 +258,11 @@ public class Main {
         wavePanel = new WaveVisualizer();
         wavePanel.setGain(1.6f);
         musicPlayer.setVisualizer(wavePanel);
+        visualizerModeButton.addActionListener(e -> {
+            String modeName = wavePanel.nextMode();
+            visualizerModeButton.setText(modeName);
+            statusLabel.setText("Status: visualizer " + modeName.toLowerCase());
+        });
 
         // Center panel
         JPanel centerPanel = new JPanel(new BorderLayout(0, 18));

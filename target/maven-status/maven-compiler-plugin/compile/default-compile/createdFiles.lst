@@ -3,6 +3,7 @@ leon\music\MusicPlayer$1.class
 leon\music\MusicPlayer$2.class
 leon\music\Main$2.class
 leon\music\PlaylistManager.class
+leon\music\WaveVisualizer$VisualizerMode.class
 leon\music\Main.class
 leon\music\MusicPlayer.class
 leon\music\Main$1.class
