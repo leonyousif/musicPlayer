@@ -170,7 +170,7 @@ public class MusicPlayer {
         Throwable t) {
             JOptionPane.showMessageDialog(
                     null,
-                    "Could not load VLC native libraries.\nCheck that VLC is installed at E:\\VLC and is 64-bit.",
+                    "Could not load VLC native libraries.\nCheck that 64-bit VLC media player is installed.",
                     "VLC error",
                     JOptionPane.ERROR_MESSAGE);
             t.printStackTrace();
