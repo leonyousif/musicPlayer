@@ -30,10 +30,14 @@ import org.jaudiotagger.audio.AudioFile;
 import org.jaudiotagger.audio.AudioFileIO;
 import org.jaudiotagger.tag.FieldKey;
 import org.jaudiotagger.tag.Tag;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import uk.co.caprica.vlcj.player.base.callback.AudioCallbackAdapter;
 
 public class Main {
+
+    private static final Logger log = LoggerFactory.getLogger(Main.class);
 
     // VLCJ
     private final MusicPlayer musicPlayer = new MusicPlayer();
@@ -250,7 +254,7 @@ public class Main {
             if (musicPlayer != null && !volumeSlider.getValueIsAdjusting()) {
                 int vol = volumeSlider.getValue();
                 musicPlayer.setVolume(volumeSlider.getValue());
-                System.out.println("Volume set to: " + vol);
+                log.debug("Volume set to: {}", vol);
             }
         });
 
@@ -302,7 +306,7 @@ public class Main {
                 if (length > 0) {
                     double fraction = progressBar.getValue() / (double) progressBar.getMaximum();
                     long newTime = (long) (fraction * length);
-                    System.out.println("Seeking to time: " + newTime + " ms");
+                    log.debug("Seeking to time: {} ms", newTime);
                     musicPlayer.seekToMs(newTime);
                 }
                 isSeeking = false;
@@ -449,7 +453,7 @@ public class Main {
             statusLabel.setText("Status: loading " + selected.getName());
 
             boolean started = musicPlayer.play(currentMediaPath);
-            System.out.println("media().play(...) returned: " + started);
+            log.info("media().play(...) returned: {}", started);
 
             if (started) {
                 playPauseButton.setText("Pause");
@@ -492,7 +496,7 @@ public class Main {
         } catch (Exception e) {
 
             trackInfoLabel.setText(audioFile.getName());
-            System.out.println("Could not read metadata: " + e.getMessage());
+            log.warn("Could not read metadata for {}: {}", audioFile.getName(), e.getMessage());
         }
     }
 
@@ -661,6 +665,7 @@ public class Main {
     }
 
     public static void main(String[] args) {
+        log.info("Starting VLCJ Music Player...");
         SwingUtilities.invokeLater(Main::new);
     }
 }

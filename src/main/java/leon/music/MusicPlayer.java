@@ -13,8 +13,12 @@ import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 //import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 
 import javax.swing.JOptionPane;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class MusicPlayer {
+
+    private static final Logger log = LoggerFactory.getLogger(MusicPlayer.class);
 
     // fixing audio
     private SourceDataLine speakerLine;
@@ -58,7 +62,7 @@ public class MusicPlayer {
                 speakerLine.start();
             } catch (Exception e) {
                 speakerLine = null;
-                e.printStackTrace();
+                log.error("Failed to initialize Java Sound SourceDataLine", e);
             }
 
             player.audio().setVolume(100);
@@ -154,8 +158,7 @@ public class MusicPlayer {
                     } catch (Throwable t) {
                         if (!audioCallbackWarned) {
                             audioCallbackWarned = true;
-                            System.out.println("Visualizer audio callback failed: " + t.getMessage());
-                            t.printStackTrace();
+                            log.warn("Visualizer audio callback failed: {}", t.getMessage(), t);
                         }
                     }
 
@@ -165,15 +168,13 @@ public class MusicPlayer {
             // enable callback
             player.audio().callback(PCM_FORMAT, PCM_RATE, PCM_CHANNELS, audioCallback, false);
 
-        } catch (
-
-        Throwable t) {
+        } catch (Throwable t) {
+            log.error("Could not load VLC native libraries. Ensure 64-bit VLC media player is installed.", t);
             JOptionPane.showMessageDialog(
                     null,
                     "Could not load VLC native libraries.\nCheck that 64-bit VLC media player is installed.",
                     "VLC error",
                     JOptionPane.ERROR_MESSAGE);
-            t.printStackTrace();
             throw new IllegalStateException("Failed to initialize VLCJ", t);
         }
     }
@@ -299,7 +300,8 @@ public class MusicPlayer {
             if (player != null) {
                 player.controls().stop();
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.debug("Error stopping player during release", e);
         }
 
         try {
@@ -309,7 +311,8 @@ public class MusicPlayer {
                 speakerLine.close();
                 speakerLine = null;
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.debug("Error closing speakerLine during release", e);
         }
 
         try {
@@ -317,7 +320,8 @@ public class MusicPlayer {
                 player.release();
                 player = null;
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.debug("Error releasing player during release", e);
         }
 
         try {
@@ -325,7 +329,8 @@ public class MusicPlayer {
                 factory.release();
                 factory = null;
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.debug("Error releasing factory during release", e);
         }
     }
 }
