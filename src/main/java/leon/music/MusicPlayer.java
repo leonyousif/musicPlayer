@@ -6,17 +6,17 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.SourceDataLine;
 
+import leon.music.service.AudioPlayer;
 import uk.co.caprica.vlcj.player.base.callback.AudioCallbackAdapter;
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
 import uk.co.caprica.vlcj.player.base.MediaPlayer;
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
-//import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 
 import javax.swing.JOptionPane;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class MusicPlayer {
+public class MusicPlayer implements AudioPlayer {
 
     private static final Logger log = LoggerFactory.getLogger(MusicPlayer.class);
 

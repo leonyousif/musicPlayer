@@ -28,8 +28,8 @@ public class Theme {
     public static final Color ACCENT_ALT = new Color(255, 183, 77);
 
     // text Colour
-    public static final java.awt.Color TEXT_COLOR = new Color(238, 242, 247);
-    public static final java.awt.Color MUTED_TEXT = new Color(150, 161, 176);
+    public static final Color TEXT_COLOR = FG_COLOR;
+    public static final Color MUTED_TEXT = new Color(150, 161, 176);
 
     // Progress sliders
     public static final Color PROGRESS_BG = new Color(43, 48, 56);
