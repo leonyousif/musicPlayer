@@ -24,10 +24,10 @@ jobs:
       - name: Package JAR with Maven
         run: mvn --batch-mode clean package
 
-      - name: Upload JAR Artifact
+      - name: Upload Distribution Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vlc-music-player-latest
-          path: target/*.jar
+          name: vlc-music-player-distribution
+          path: target/*-bin.zip
           retention-days: 14
           if-no-files-found: error
