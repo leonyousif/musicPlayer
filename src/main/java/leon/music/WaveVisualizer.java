@@ -2,6 +2,7 @@ package leon.music;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 public class WaveVisualizer extends JPanel {
@@ -22,11 +23,11 @@ public class WaveVisualizer extends JPanel {
         }
     }
 
-    
-    private final float[] ring;
+    // --- Audio sample ring buffer & atomic snapshot buffer ---
+    private final float[] ringBuffer;
     private int writePos = 0;
+    private final AtomicReference<float[]> snapshotRef;
 
-   
     private volatile float gain = 1.0f;
     private volatile boolean active = false;
     private volatile VisualizerMode visualizerMode = VisualizerMode.WAVEFORM;
@@ -36,7 +37,9 @@ public class WaveVisualizer extends JPanel {
     private final Timer repaintTimer;
 
     public WaveVisualizer(int bufferSize) {
-        this.ring = new float[Math.max(512, bufferSize)];
+        int capacity = Math.max(512, bufferSize);
+        this.ringBuffer = new float[capacity];
+        this.snapshotRef = new AtomicReference<>(new float[capacity]);
         setOpaque(true);
         setBackground(Theme.BG_COLOR);
 
@@ -45,6 +48,19 @@ public class WaveVisualizer extends JPanel {
 
     public WaveVisualizer() {
         this(2048);
+    }
+
+    public float[] getSnapshot() {
+        float[] snap = snapshotRef.get();
+        return snap != null ? snap.clone() : new float[0];
+    }
+
+    public AtomicReference<float[]> getSnapshotRef() {
+        return snapshotRef;
+    }
+
+    public int getBufferSize() {
+        return ringBuffer.length;
     }
 
     
@@ -93,20 +109,36 @@ public class WaveVisualizer extends JPanel {
     }
 
    
-    public void pushSamples(float[] samples) {
+    public synchronized void pushSamples(float[] samples) {
         if (samples == null || samples.length == 0) return;
 
         float peak = 0f;
-        
         for (float s : samples) {
-            peak = Math.max(peak, Math.abs(s));
-            ring[writePos] = s;
+            float normalized = normalizeSample(s);
+            peak = Math.max(peak, Math.abs(normalized));
+            ringBuffer[writePos] = normalized;
             writePos++;
-            if (writePos >= ring.length) writePos = 0;
+            if (writePos >= ringBuffer.length) {
+                writePos = 0;
+            }
         }
 
+        snapshotRef.set(ringBuffer.clone());
         lastPeak = peak;
         lastSampleNanos = System.nanoTime();
+    }
+
+    private static float normalizeSample(float s) {
+        if (Float.isNaN(s)) {
+            return 0f;
+        }
+        if (s > 1.0f) {
+            return 1.0f;
+        }
+        if (s < -1.0f) {
+            return -1.0f;
+        }
+        return s;
     }
 
     @Override
@@ -135,12 +167,17 @@ public class WaveVisualizer extends JPanel {
 
             drawBackground(g2, w, h);
 
+            float[] snapshot = snapshotRef.get();
+            if (snapshot == null) {
+                snapshot = new float[0];
+            }
+
             if (visualizerMode == VisualizerMode.BARS) {
-                drawBars(g2, w, h, useFallbackWave);
+                drawBars(g2, w, h, useFallbackWave, snapshot);
             } else if (visualizerMode == VisualizerMode.CIRCLE) {
-                drawCircleSpectrum(g2, w, h, useFallbackWave);
+                drawCircleSpectrum(g2, w, h, useFallbackWave, snapshot);
             } else {
-                drawWaveform(g2, w, h, useFallbackWave);
+                drawWaveform(g2, w, h, useFallbackWave, snapshot);
             }
 
         } finally {
@@ -165,26 +202,35 @@ public class WaveVisualizer extends JPanel {
         }
     }
 
-    private void drawWaveform(Graphics2D g2, int w, int h, boolean useFallbackWave) {
+    private void drawWaveform(Graphics2D g2, int w, int h, boolean useFallbackWave, float[] snapshot) {
         int midY = h / 2;
+        if (snapshot == null || snapshot.length == 0) {
+            g2.setColor(withAlpha(Theme.PROGRESS_FG, 95));
+            g2.setStroke(new BasicStroke(1f));
+            g2.drawLine(14, midY, w - 14, midY);
+            return;
+        }
+
         int targetPoints = Math.max(48, Math.min(180, w / 8));
-        int points = Math.min(targetPoints, ring.length);
-        int step = Math.max(1, ring.length / points);
+        int points = Math.min(targetPoints, snapshot.length);
+        int step = Math.max(1, snapshot.length / points);
 
         int[] xs = new int[points];
         int[] ys = new int[points];
 
-        int idx = writePos;
+        int idx = 0;
         float ampScale = (h * 0.45f) * gain;
         for (int i = 0; i < points; i++) {
-            float s = useFallbackWave ? fallbackSample(i, points) : averageSample(idx, step);
+            float s = useFallbackWave ? fallbackSample(i, points) : averageSample(snapshot, idx, step);
             s = clamp(s, -1f, 1f);
 
             xs[i] = (points == 1) ? 0 : Math.round(i * (w - 1f) / (points - 1f));
             ys[i] = midY - Math.round(s * ampScale);
 
             idx += step;
-            while (idx >= ring.length) idx -= ring.length;
+            if (idx >= snapshot.length) {
+                idx -= snapshot.length;
+            }
         }
 
         g2.setPaint(new GradientPaint(0, 0, Theme.ACCENT_ALT, w, h, Theme.PROGRESS_FG));
@@ -196,9 +242,9 @@ public class WaveVisualizer extends JPanel {
         g2.drawLine(14, midY, w - 14, midY);
     }
 
-    private void drawBars(Graphics2D g2, int w, int h, boolean useFallbackWave) {
+    private void drawBars(Graphics2D g2, int w, int h, boolean useFallbackWave, float[] snapshot) {
         int barCount = Math.max(18, Math.min(52, w / 16));
-        float[] levels = buildLevels(barCount, useFallbackWave);
+        float[] levels = buildLevels(barCount, useFallbackWave, snapshot);
         int left = 22;
         int right = w - 22;
         int top = 24;
@@ -219,9 +265,9 @@ public class WaveVisualizer extends JPanel {
         }
     }
 
-    private void drawCircleSpectrum(Graphics2D g2, int w, int h, boolean useFallbackWave) {
+    private void drawCircleSpectrum(Graphics2D g2, int w, int h, boolean useFallbackWave, float[] snapshot) {
         int barCount = 72;
-        float[] levels = buildLevels(barCount, useFallbackWave);
+        float[] levels = buildLevels(barCount, useFallbackWave, snapshot);
         int centerX = w / 2;
         int centerY = h / 2;
         float baseRadius = Math.max(28f, Math.min(w, h) * 0.22f);
@@ -253,34 +299,42 @@ public class WaveVisualizer extends JPanel {
                 Math.round(baseRadius * 2));
     }
 
-    private float[] buildLevels(int levelCount, boolean useFallbackWave) {
+    private float[] buildLevels(int levelCount, boolean useFallbackWave, float[] snapshot) {
         float[] levels = new float[levelCount];
-        int step = Math.max(1, ring.length / levelCount);
-        int idx = writePos;
+        if (snapshot == null || snapshot.length == 0) {
+            return levels;
+        }
+        int step = Math.max(1, snapshot.length / levelCount);
+        int idx = 0;
 
         for (int i = 0; i < levelCount; i++) {
             float level = useFallbackWave
                     ? Math.abs(fallbackSample(i, levelCount))
-                    : averageAbsSample(idx, step);
+                    : averageAbsSample(snapshot, idx, step);
             float weightedLevel = (float) Math.pow(clamp(level * gain * 2.5f, 0f, 1f), 0.62f);
             levels[i] = weightedLevel;
 
             idx += step;
-            while (idx >= ring.length) idx -= ring.length;
+            if (idx >= snapshot.length) {
+                idx -= snapshot.length;
+            }
         }
 
         return levels;
     }
 
-    private float averageSample(int start, int count) {
+    private float averageSample(float[] buffer, int start, int count) {
+        if (buffer == null || buffer.length == 0) {
+            return 0f;
+        }
         float total = 0f;
-        int idx = start;
-        int actualCount = Math.max(1, Math.min(count, ring.length));
+        int idx = (start % buffer.length + buffer.length) % buffer.length;
+        int actualCount = Math.max(1, Math.min(count, buffer.length));
 
         for (int i = 0; i < actualCount; i++) {
-            total += ring[idx];
+            total += buffer[idx];
             idx++;
-            if (idx >= ring.length) {
+            if (idx >= buffer.length) {
                 idx = 0;
             }
         }
@@ -288,15 +342,18 @@ public class WaveVisualizer extends JPanel {
         return total / actualCount;
     }
 
-    private float averageAbsSample(int start, int count) {
+    private float averageAbsSample(float[] buffer, int start, int count) {
+        if (buffer == null || buffer.length == 0) {
+            return 0f;
+        }
         float total = 0f;
-        int idx = start;
-        int actualCount = Math.max(1, Math.min(count, ring.length));
+        int idx = (start % buffer.length + buffer.length) % buffer.length;
+        int actualCount = Math.max(1, Math.min(count, buffer.length));
 
         for (int i = 0; i < actualCount; i++) {
-            total += Math.abs(ring[idx]);
+            total += Math.abs(buffer[idx]);
             idx++;
-            if (idx >= ring.length) {
+            if (idx >= buffer.length) {
                 idx = 0;
             }
         }
