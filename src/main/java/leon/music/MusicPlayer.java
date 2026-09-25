@@ -5,6 +5,10 @@ import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.SourceDataLine;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import leon.music.service.AudioPlayer;
 import uk.co.caprica.vlcj.player.base.callback.AudioCallbackAdapter;
@@ -23,12 +27,14 @@ public class MusicPlayer implements AudioPlayer {
     // fixing audio
     private SourceDataLine speakerLine;
     private AudioFormat speakerFormat;
+    private final BlockingQueue<byte[]> audioQueue = new ArrayBlockingQueue<>(16);
+    private volatile boolean playbackRunning = false;
+    private Thread playbackThread;
 
     private MediaPlayerFactory factory;
     private MediaPlayer player;
     private Runnable onFinished;
-    private boolean ignoreNextFinished = false;
-    private long ignoreFinishedUntilNanos = 0L;
+    private final AtomicBoolean userRequestedStop = new AtomicBoolean(false);
     private boolean paused = false;
     private volatile boolean releasing = false;
 
@@ -65,6 +71,8 @@ public class MusicPlayer implements AudioPlayer {
                 log.error("Failed to initialize Java Sound SourceDataLine", e);
             }
 
+            ensurePlaybackThreadStarted();
+
             player.audio().setVolume(100);
             player.events().addMediaPlayerEventListener(new MediaPlayerEventAdapter() {
                 @Override
@@ -72,13 +80,19 @@ public class MusicPlayer implements AudioPlayer {
                     if (releasing) {
                         return;
                     }
-                    if (ignoreNextFinished && System.nanoTime() <= ignoreFinishedUntilNanos) {
-                        ignoreNextFinished = false;
+                    if (userRequestedStop.compareAndSet(true, false)) {
                         return;
                     }
-                    ignoreNextFinished = false;
                     paused = false;
                     setVisualizerActive(false);
+                    audioQueue.clear();
+                    if (speakerLine != null) {
+                        try {
+                            speakerLine.flush();
+                        } catch (Exception e) {
+                            log.debug("Error flushing speakerLine on track finished", e);
+                        }
+                    }
                     if (onFinished != null)
                         onFinished.run();
                 }
@@ -94,11 +108,6 @@ public class MusicPlayer implements AudioPlayer {
                             return;
 
                         byte[] pcm = samples.getByteArray(0, bytes);
-
-                        if (speakerLine != null) {
-                            byte[] outputPcm = applyVolume(pcm, outputVolume);
-                            speakerLine.write(outputPcm, 0, outputPcm.length);
-                        }
 
                         int bytesPerFrame = PCM_CHANNELS * 2;
                         int totalFrames = pcm.length / bytesPerFrame;
@@ -155,6 +164,11 @@ public class MusicPlayer implements AudioPlayer {
                             v.pushSamples(mono);
                         }
 
+                        if (speakerLine != null) {
+                            applyVolume(pcm, outputVolume);
+                            queueAudioChunk(pcm);
+                        }
+
                     } catch (Throwable t) {
                         if (!audioCallbackWarned) {
                             audioCallbackWarned = true;
@@ -188,6 +202,7 @@ public class MusicPlayer implements AudioPlayer {
     }
 
     public boolean play(String mediaPath) {
+        userRequestedStop.set(false);
         if (player == null)
             return false;
         if (mediaPath == null || mediaPath.isBlank())
@@ -195,6 +210,7 @@ public class MusicPlayer implements AudioPlayer {
 
         releasing = false;
         paused = false;
+        ensurePlaybackThreadStarted();
         boolean started = player.media().play(mediaPath);
         player.audio().setVolume(currentVolume);
         setVisualizerActive(started);
@@ -210,11 +226,19 @@ public class MusicPlayer implements AudioPlayer {
     }
 
     public void stop() {
-        if (player == null)
-            return;
-        player.controls().stop();
+        if (player != null) {
+            player.controls().stop();
+        }
         paused = false;
         setVisualizerActive(false);
+        audioQueue.clear();
+        if (speakerLine != null) {
+            try {
+                speakerLine.flush();
+            } catch (Exception e) {
+                log.debug("Error flushing speakerLine during stop", e);
+            }
+        }
     }
 
     public void setVolume(int volume) {
@@ -238,9 +262,17 @@ public class MusicPlayer implements AudioPlayer {
     }
 
     public void seekToMs(long newTimeMs) {
-        if (player == null)
-            return;
-        player.controls().setTime(newTimeMs);
+        audioQueue.clear();
+        if (speakerLine != null) {
+            try {
+                speakerLine.flush();
+            } catch (Exception e) {
+                log.debug("Error flushing speakerLine during seek", e);
+            }
+        }
+        if (player != null) {
+            player.controls().setTime(newTimeMs);
+        }
     }
 
     public void setOnFinished(Runnable onFinished) {
@@ -248,10 +280,7 @@ public class MusicPlayer implements AudioPlayer {
     }
 
     public void stopByUser() {
-        if (isPlaying() || paused) {
-            ignoreNextFinished = true;
-            ignoreFinishedUntilNanos = System.nanoTime() + 1_500_000_000L;
-        }
+        userRequestedStop.set(true);
         stop();
     }
 
@@ -270,24 +299,95 @@ public class MusicPlayer implements AudioPlayer {
         }
     }
 
-    private byte[] applyVolume(byte[] pcm, float volume) {
-        if (volume >= 0.995f) {
+    void queueAudioChunk(byte[] chunk) {
+        if (chunk == null || chunk.length == 0) {
+            return;
+        }
+        if (!audioQueue.offer(chunk)) {
+            audioQueue.poll();
+            audioQueue.offer(chunk);
+        }
+    }
+
+    private synchronized void ensurePlaybackThreadStarted() {
+        if (playbackThread == null || !playbackThread.isAlive()) {
+            playbackRunning = true;
+            playbackThread = new Thread(this::playbackLoop, "audio-playback-thread");
+            playbackThread.setDaemon(true);
+            playbackThread.start();
+        }
+    }
+
+    private void playbackLoop() {
+        while (playbackRunning && !Thread.currentThread().isInterrupted()) {
+            try {
+                byte[] chunk = audioQueue.poll(100, TimeUnit.MILLISECONDS);
+                if (chunk == null) {
+                    continue;
+                }
+                SourceDataLine line = speakerLine;
+                if (line != null && line.isOpen()) {
+                    line.write(chunk, 0, chunk.length);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Throwable t) {
+                if (!playbackRunning) {
+                    break;
+                }
+                log.warn("Error writing audio to speakerLine in playback thread: {}", t.getMessage());
+            }
+        }
+    }
+
+    BlockingQueue<byte[]> getAudioQueue() {
+        return audioQueue;
+    }
+
+    Thread getPlaybackThread() {
+        return playbackThread;
+    }
+
+    boolean isPlaybackRunning() {
+        return playbackRunning;
+    }
+
+    AtomicBoolean getUserRequestedStop() {
+        return userRequestedStop;
+    }
+
+    void setSpeakerLine(SourceDataLine speakerLine) {
+        this.speakerLine = speakerLine;
+    }
+
+    void startPlaybackThread() {
+        ensurePlaybackThreadStarted();
+    }
+
+    byte[] applyVolume(byte[] pcm, float volume) {
+        if (pcm == null || pcm.length == 0 || volume >= 0.995f) {
             return pcm;
         }
 
-        byte[] adjusted = pcm.clone();
-        for (int i = 0; i + 1 < adjusted.length; i += 2) {
-            short sample = (short) ((adjusted[i + 1] << 8) | (adjusted[i] & 0xff));
-            int scaled = Math.round(sample * volume);
-            if (scaled > Short.MAX_VALUE)
-                scaled = Short.MAX_VALUE;
-            if (scaled < Short.MIN_VALUE)
-                scaled = Short.MIN_VALUE;
-            adjusted[i] = (byte) (scaled & 0xff);
-            adjusted[i + 1] = (byte) ((scaled >> 8) & 0xff);
+        if (volume <= 0.001f) {
+            java.util.Arrays.fill(pcm, (byte) 0);
+            return pcm;
         }
 
-        return adjusted;
+        for (int i = 0; i + 1 < pcm.length; i += 2) {
+            short sample = (short) ((pcm[i + 1] << 8) | (pcm[i] & 0xff));
+            int scaled = Math.round(sample * volume);
+            if (scaled > Short.MAX_VALUE) {
+                scaled = Short.MAX_VALUE;
+            } else if (scaled < Short.MIN_VALUE) {
+                scaled = Short.MIN_VALUE;
+            }
+            pcm[i] = (byte) (scaled & 0xff);
+            pcm[i + 1] = (byte) ((scaled >> 8) & 0xff);
+        }
+
+        return pcm;
     }
 
     public void release() {
@@ -295,6 +395,18 @@ public class MusicPlayer implements AudioPlayer {
         releasing = true;
         onFinished = null;
         setVisualizerActive(false);
+
+        playbackRunning = false;
+        audioQueue.clear();
+        if (playbackThread != null) {
+            playbackThread.interrupt();
+            try {
+                playbackThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            playbackThread = null;
+        }
 
         try {
             if (player != null) {
