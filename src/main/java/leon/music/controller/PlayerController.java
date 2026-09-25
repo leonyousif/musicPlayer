@@ -71,6 +71,7 @@ public class PlayerController {
 
             if (waveVisualizer != null) {
                 audioPlayer.setVisualizer(waveVisualizer);
+                waveVisualizer.setPlaybackActive(playbackState == PlaybackState.PLAYING);
             }
         }
     }
@@ -95,7 +96,7 @@ public class PlayerController {
 
         if (audioPlayer.isPlaying()) {
             audioPlayer.pause();
-            playbackState = PlaybackState.PAUSED;
+            setPlaybackState(PlaybackState.PAUSED);
             runOnEdt(() -> {
                 if (playbackControlsPanel != null) playbackControlsPanel.setPlaybackState(PlaybackState.PAUSED);
                 if (trackInfoPanel != null) trackInfoPanel.setStatus("Paused");
@@ -106,7 +107,7 @@ public class PlayerController {
 
         if (audioPlayer.isPaused()) {
             audioPlayer.pause();
-            playbackState = PlaybackState.PLAYING;
+            setPlaybackState(PlaybackState.PLAYING);
             runOnEdt(() -> {
                 if (playbackControlsPanel != null) playbackControlsPanel.setPlaybackState(PlaybackState.PLAYING);
                 if (trackInfoPanel != null) trackInfoPanel.setStatus("Playing");
@@ -127,7 +128,7 @@ public class PlayerController {
 
     public void stop() {
         audioPlayer.stopByUser();
-        playbackState = PlaybackState.STOPPED;
+        setPlaybackState(PlaybackState.STOPPED);
         runOnEdt(() -> {
             if (progressBarPanel != null) progressBarPanel.reset();
             if (playbackControlsPanel != null) playbackControlsPanel.setPlaybackState(PlaybackState.STOPPED);
@@ -171,14 +172,14 @@ public class PlayerController {
         String path = track.path().toAbsolutePath().toString();
         boolean started = audioPlayer.play(path);
         if (started) {
-            this.playbackState = PlaybackState.PLAYING;
+            setPlaybackState(PlaybackState.PLAYING);
             runOnEdt(() -> {
                 if (playbackControlsPanel != null) playbackControlsPanel.setPlaybackState(PlaybackState.PLAYING);
                 if (trackInfoPanel != null) trackInfoPanel.setStatus("Status: playing " + track.title());
                 if (!progressTimer.isRunning()) progressTimer.start();
             });
         } else {
-            this.playbackState = PlaybackState.STOPPED;
+            setPlaybackState(PlaybackState.STOPPED);
             runOnEdt(() -> {
                 if (playbackControlsPanel != null) playbackControlsPanel.setPlaybackState(PlaybackState.STOPPED);
                 if (trackInfoPanel != null) trackInfoPanel.setStatus("Status: failed to start playback");
@@ -202,7 +203,7 @@ public class PlayerController {
     }
 
     private void stopAfterPlaybackFinished() {
-        playbackState = PlaybackState.STOPPED;
+        setPlaybackState(PlaybackState.STOPPED);
         runOnEdt(() -> {
             if (progressBarPanel != null) progressBarPanel.reset();
             if (playbackControlsPanel != null) playbackControlsPanel.setPlaybackState(PlaybackState.STOPPED);
@@ -219,14 +220,14 @@ public class PlayerController {
 
             boolean started = audioPlayer.play(track.path().toAbsolutePath().toString());
             if (started) {
-                this.playbackState = PlaybackState.PLAYING;
+                setPlaybackState(PlaybackState.PLAYING);
                 runOnEdt(() -> {
                     if (playbackControlsPanel != null) playbackControlsPanel.setPlaybackState(PlaybackState.PLAYING);
                     if (trackInfoPanel != null) trackInfoPanel.setStatus("Status: repeating");
                     if (!progressTimer.isRunning()) progressTimer.start();
                 });
             } else {
-                this.playbackState = PlaybackState.STOPPED;
+                setPlaybackState(PlaybackState.STOPPED);
                 runOnEdt(() -> {
                     if (playbackControlsPanel != null) playbackControlsPanel.setPlaybackState(PlaybackState.STOPPED);
                     if (trackInfoPanel != null) trackInfoPanel.setStatus("Status: failed to start playback");
@@ -359,7 +360,7 @@ public class PlayerController {
             if (audioPlayer.isPlaying() || audioPlayer.isPaused()) {
                 audioPlayer.stopByUser();
             }
-            playbackState = PlaybackState.STOPPED;
+            setPlaybackState(PlaybackState.STOPPED);
             runOnEdt(() -> {
                 if (playbackControlsPanel != null) playbackControlsPanel.setPlaybackState(PlaybackState.STOPPED);
                 if (trackInfoPanel != null) {
@@ -419,6 +420,24 @@ public class PlayerController {
             waveVisualizer.dispose();
         }
         audioPlayer.release();
+    }
+
+    private void setPlaybackState(PlaybackState newState) {
+        this.playbackState = newState;
+        if (waveVisualizer != null) {
+            waveVisualizer.setPlaybackActive(newState == PlaybackState.PLAYING);
+        }
+    }
+
+    public WaveVisualizer getWaveVisualizer() {
+        return waveVisualizer;
+    }
+
+    public void setWaveVisualizer(WaveVisualizer visualizer) {
+        this.waveVisualizer = visualizer;
+        if (visualizer != null) {
+            visualizer.setPlaybackActive(playbackState == PlaybackState.PLAYING);
+        }
     }
 
     public PlaybackState getPlaybackState() {

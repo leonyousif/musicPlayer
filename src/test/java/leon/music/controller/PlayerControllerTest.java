@@ -193,6 +193,40 @@ class PlayerControllerTest {
         assertThat(controller.getPlaybackState()).isEqualTo(PlaybackState.PLAYING);
     }
 
+    @Test
+    @DisplayName("Visualizer repaint timer automatically runs during PLAYING and halts during PAUSED or STOPPED")
+    void testVisualizerTimerConditionedOnPlaybackState() {
+        WaveVisualizer visualizer = new WaveVisualizer();
+        controller.setWaveVisualizer(visualizer);
+
+        playlistService.setTracks(List.of(track1, track2));
+
+        // Initial state: IDLE -> visualizer timer not running
+        assertThat(visualizer.isRepaintTimerRunning()).isFalse();
+
+        // 1. Play -> PLAYING -> timer is running
+        controller.playOrPause();
+        assertThat(controller.getPlaybackState()).isEqualTo(PlaybackState.PLAYING);
+        assertThat(visualizer.isRepaintTimerRunning()).isTrue();
+
+        // 2. Pause -> PAUSED -> timer is halted immediately
+        controller.playOrPause();
+        assertThat(controller.getPlaybackState()).isEqualTo(PlaybackState.PAUSED);
+        assertThat(visualizer.isRepaintTimerRunning()).isFalse();
+
+        // 3. Resume -> PLAYING -> timer runs again
+        controller.playOrPause();
+        assertThat(controller.getPlaybackState()).isEqualTo(PlaybackState.PLAYING);
+        assertThat(visualizer.isRepaintTimerRunning()).isTrue();
+
+        // 4. Stop -> STOPPED -> timer is halted immediately
+        controller.stop();
+        assertThat(controller.getPlaybackState()).isEqualTo(PlaybackState.STOPPED);
+        assertThat(visualizer.isRepaintTimerRunning()).isFalse();
+
+        visualizer.dispose();
+    }
+
     // Stub AudioPlayer for unit testing
     private static class StubAudioPlayer implements AudioPlayer {
         boolean ready = true;

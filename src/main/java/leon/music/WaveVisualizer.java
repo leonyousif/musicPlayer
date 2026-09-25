@@ -1,7 +1,10 @@
 package leon.music;
 
+import leon.music.util.FastFourierTransform;
+
 import javax.swing.*;
 import java.awt.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 public class WaveVisualizer extends JPanel {
@@ -22,11 +25,12 @@ public class WaveVisualizer extends JPanel {
         }
     }
 
-    
+    private static final float DECAY_FACTOR = 0.8f;
+
     private final float[] ring;
     private int writePos = 0;
+    private final AtomicReference<float[]> snapshotRef;
 
-   
     private volatile float gain = 1.0f;
     private volatile boolean active = false;
     private volatile VisualizerMode visualizerMode = VisualizerMode.WAVEFORM;
@@ -35,8 +39,11 @@ public class WaveVisualizer extends JPanel {
     private float fallbackPhase = 0f;
     private final Timer repaintTimer;
 
+    private float[] currentBandLevels;
+
     public WaveVisualizer(int bufferSize) {
         this.ring = new float[Math.max(512, bufferSize)];
+        this.snapshotRef = new AtomicReference<>(new float[this.ring.length]);
         setOpaque(true);
         setBackground(Theme.BG_COLOR);
 
@@ -47,13 +54,38 @@ public class WaveVisualizer extends JPanel {
         this(2048);
     }
 
-    
     public void setGain(float gain) {
         this.gain = Math.max(0f, Math.min(10f, gain));
     }
 
-    public void setActive(boolean active) {
+    public void setPlaybackActive(boolean active) {
         this.active = active;
+        if (active) {
+            if (!repaintTimer.isRunning()) {
+                repaintTimer.start();
+            }
+        } else {
+            if (repaintTimer.isRunning()) {
+                repaintTimer.stop();
+            }
+            repaint();
+        }
+    }
+
+    public void setActive(boolean active) {
+        setPlaybackActive(active);
+    }
+
+    public boolean isPlaybackActive() {
+        return active;
+    }
+
+    public boolean isRepaintTimerRunning() {
+        return repaintTimer.isRunning();
+    }
+
+    public AtomicReference<float[]> getSnapshotRef() {
+        return snapshotRef;
     }
 
     public String nextMode() {
@@ -74,36 +106,43 @@ public class WaveVisualizer extends JPanel {
     }
 
     public void dispose() {
-        repaintTimer.stop();
-        active = false;
+        setPlaybackActive(false);
     }
 
     @Override
     public void addNotify() {
         super.addNotify();
-        if (!repaintTimer.isRunning()) {
+        if (active && !repaintTimer.isRunning()) {
             repaintTimer.start();
         }
     }
 
     @Override
     public void removeNotify() {
-        repaintTimer.stop();
+        if (repaintTimer.isRunning()) {
+            repaintTimer.stop();
+        }
         super.removeNotify();
     }
 
-   
     public void pushSamples(float[] samples) {
         if (samples == null || samples.length == 0) return;
 
         float peak = 0f;
-        
+
         for (float s : samples) {
             peak = Math.max(peak, Math.abs(s));
             ring[writePos] = s;
             writePos++;
             if (writePos >= ring.length) writePos = 0;
         }
+
+        float[] snap = new float[ring.length];
+        int pos = writePos;
+        int firstChunk = ring.length - pos;
+        System.arraycopy(ring, pos, snap, 0, firstChunk);
+        System.arraycopy(ring, 0, snap, firstChunk, pos);
+        snapshotRef.set(snap);
 
         lastPeak = peak;
         lastSampleNanos = System.nanoTime();
@@ -254,22 +293,35 @@ public class WaveVisualizer extends JPanel {
     }
 
     private float[] buildLevels(int levelCount, boolean useFallbackWave) {
-        float[] levels = new float[levelCount];
-        int step = Math.max(1, ring.length / levelCount);
-        int idx = writePos;
-
-        for (int i = 0; i < levelCount; i++) {
-            float level = useFallbackWave
-                    ? Math.abs(fallbackSample(i, levelCount))
-                    : averageAbsSample(idx, step);
-            float weightedLevel = (float) Math.pow(clamp(level * gain * 2.5f, 0f, 1f), 0.62f);
-            levels[i] = weightedLevel;
-
-            idx += step;
-            while (idx >= ring.length) idx -= ring.length;
+        if (currentBandLevels == null || currentBandLevels.length != levelCount) {
+            float[] newLevels = new float[levelCount];
+            if (currentBandLevels != null) {
+                System.arraycopy(currentBandLevels, 0, newLevels, 0, Math.min(currentBandLevels.length, levelCount));
+            }
+            currentBandLevels = newLevels;
         }
 
-        return levels;
+        if (useFallbackWave) {
+            float[] target = new float[levelCount];
+            for (int i = 0; i < levelCount; i++) {
+                float level = Math.abs(fallbackSample(i, levelCount));
+                target[i] = (float) Math.pow(clamp(level * gain * 2.5f, 0f, 1f), 0.62f);
+            }
+            currentBandLevels = FastFourierTransform.smoothBands(currentBandLevels, target, DECAY_FACTOR);
+            return currentBandLevels;
+        }
+
+        float[] snapshot = snapshotRef.get();
+        // Compute logarithmically spaced frequency bands from snapshotRef using FFT
+        float[] targetBands = FastFourierTransform.computePowerSpectrum(snapshot, 44100, levelCount);
+
+        for (int i = 0; i < levelCount; i++) {
+            float weightedLevel = (float) Math.pow(clamp(targetBands[i] * gain * 1.8f, 0f, 1f), 0.72f);
+            targetBands[i] = weightedLevel;
+        }
+
+        currentBandLevels = FastFourierTransform.smoothBands(currentBandLevels, targetBands, DECAY_FACTOR);
+        return currentBandLevels;
     }
 
     private float averageSample(int start, int count) {
